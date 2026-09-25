@@ -40,6 +40,7 @@ final class WEM_ML_Router {
         add_action( 'init', array( __CLASS__, 'register_rewrite_rules' ) );
         add_filter( 'query_vars', array( __CLASS__, 'register_query_vars' ) );
         add_filter( 'request', array( __CLASS__, 'resolve_prefixed_request' ) );
+        add_filter( 'pre_handle_404', array( __CLASS__, 'force_gated_route_404' ), 10, 2 );
         add_filter( 'redirect_canonical', array( __CLASS__, 'preserve_multilingual_route' ), 10, 2 );
 
         // Outgoing target-language permalinks.
@@ -104,14 +105,11 @@ final class WEM_ML_Router {
             ? trim( (string) $query_vars['wem_ml_path'], '/' )
             : '';
 
-        // /es/ represents the site's configured front page, but only when
-        // that object's Spanish language state is explicitly published.
         if ( '' === $path ) {
             self::resolve_front_page( $query_vars );
             return $query_vars;
         }
 
-        // Real translated-slug route model.
         if ( false === strpos( $path, '/' ) ) {
             $resolved = WEM_ML_Slug_Repository::resolve( 'es', $path );
 
@@ -188,6 +186,31 @@ final class WEM_ML_Router {
     }
 
     /**
+     * Force a gated multilingual route into WordPress's real 404 state.
+     *
+     * Merely declining to resolve the object is not sufficient on all themes
+     * and permalink setups. This filter makes the publication gate explicit.
+     *
+     * @param bool|null $preempt  Whether WordPress 404 handling is preempted.
+     * @param WP_Query  $wp_query Main query.
+     * @return bool|null
+     */
+    public static function force_gated_route_404( $preempt, $wp_query ) {
+        if ( ! self::$route_gated || 'es' !== WEM_ML_Language_Context::get_current_language() ) {
+            return $preempt;
+        }
+
+        if ( $wp_query instanceof WP_Query ) {
+            $wp_query->set_404();
+        }
+
+        status_header( 404 );
+        nocache_headers();
+
+        return true;
+    }
+
+    /**
      * Apply a resolved Page/Post object to the main WordPress query.
      *
      * @param array<string,mixed> $query_vars Parsed request vars, by reference.
@@ -207,18 +230,18 @@ final class WEM_ML_Router {
     }
 
     /**
-     * Prevent WordPress from redirecting a successfully resolved WEM target
-     * language request back to the source-language permalink.
+     * Preserve WEM target-language routes from WordPress canonical redirects.
      *
-     * Draft/gated routes are deliberately excluded so WordPress can complete
-     * the normal 404 request lifecycle.
+     * Resolved published routes and explicitly gated draft routes must both
+     * remain on the requested multilingual URL. Gated routes are handled as
+     * real 404 responses by force_gated_route_404().
      *
      * @param string|false $redirect_url  Canonical redirect URL.
      * @param string       $requested_url Requested URL.
      * @return string|false
      */
     public static function preserve_multilingual_route( $redirect_url, $requested_url ) {
-        if ( ! self::$route_matched || self::$resolved_object_id <= 0 || self::$route_gated ) {
+        if ( ! self::$route_matched ) {
             return $redirect_url;
         }
 
@@ -226,7 +249,11 @@ final class WEM_ML_Router {
             return $redirect_url;
         }
 
-        return false;
+        if ( self::$route_gated || self::$resolved_object_id > 0 ) {
+            return false;
+        }
+
+        return $redirect_url;
     }
 
     /**
@@ -242,7 +269,11 @@ final class WEM_ML_Router {
             return $url;
         }
 
-        return self::get_target_permalink( $url, 'page', (int) $post_id );
+        if ( 'es' !== WEM_ML_Language_Context::get_current_language() ) {
+            return $url;
+        }
+
+        return self::get_localized_permalink( 'page', (int) $post_id, 'es', $url );
     }
 
     /**
@@ -258,36 +289,49 @@ final class WEM_ML_Router {
             return $url;
         }
 
-        return self::get_target_permalink( $url, 'post', (int) $post->ID );
+        if ( 'es' !== WEM_ML_Language_Context::get_current_language() ) {
+            return $url;
+        }
+
+        return self::get_localized_permalink( 'post', (int) $post->ID, 'es', $url );
     }
 
     /**
-     * Build the target-language permalink only for explicitly published objects.
+     * Build a localized permalink independently of the current request context.
      *
-     * No slug mapping or draft state means the original WordPress permalink is
-     * preserved. This prevents draft language versions from being advertised.
+     * This is the single reusable URL-generation rule used by both frontend
+     * permalink filters and the admin diagnostics lab.
      *
-     * @param string $original_url Original WordPress permalink.
-     * @param string $object_type  page or post.
-     * @param int    $object_id    Object ID.
+     * @param string      $object_type  page or post.
+     * @param int         $object_id    WordPress object ID.
+     * @param string      $language     Target language code.
+     * @param string|null $fallback_url Optional source permalink fallback.
      * @return string
      */
-    private static function get_target_permalink( $original_url, $object_type, $object_id ) {
-        if ( 'es' !== WEM_ML_Language_Context::get_current_language() ) {
-            return $original_url;
+    public static function get_localized_permalink( $object_type, $object_id, $language = 'es', $fallback_url = null ) {
+        $object_type = sanitize_key( $object_type );
+        $object_id   = absint( $object_id );
+        $language    = sanitize_key( $language );
+
+        if ( null === $fallback_url ) {
+            $fallback_url = get_permalink( $object_id );
         }
 
-        if ( ! WEM_ML_Object_State::is_published( $object_type, $object_id, 'es' ) ) {
-            return $original_url;
+        if ( 'es' !== $language ) {
+            return (string) $fallback_url;
         }
 
-        $slug = WEM_ML_Slug_Repository::get_slug( $object_type, $object_id, 'es' );
+        if ( ! WEM_ML_Object_State::is_published( $object_type, $object_id, $language ) ) {
+            return (string) $fallback_url;
+        }
+
+        $slug = WEM_ML_Slug_Repository::get_slug( $object_type, $object_id, $language );
 
         if ( null === $slug || '' === $slug ) {
-            return $original_url;
+            return (string) $fallback_url;
         }
 
-        return home_url( user_trailingslashit( 'es/' . $slug ) );
+        return home_url( user_trailingslashit( $language . '/' . $slug ) );
     }
 
     /**
