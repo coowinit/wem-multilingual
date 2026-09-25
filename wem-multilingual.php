@@ -20,7 +20,11 @@ define( 'WEM_ML_DIR', plugin_dir_path( __FILE__ ) );
 
 require_once WEM_ML_DIR . 'includes/class-wem-ml-schema.php';
 require_once WEM_ML_DIR . 'includes/class-language-context.php';
+require_once WEM_ML_DIR . 'includes/class-router.php';
 
 register_activation_hook( __FILE__, array( 'WEM_ML_Schema', 'install' ) );
+register_activation_hook( __FILE__, array( 'WEM_ML_Router', 'activate' ) );
+register_deactivation_hook( __FILE__, array( 'WEM_ML_Router', 'deactivate' ) );
 
 WEM_ML_Language_Context::init();
+WEM_ML_Router::init();
