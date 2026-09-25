@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WEM Multilingual
  * Description: Experimental SEO-first multilingual core for WordPress B2B websites.
- * Version: 0.1.0
+ * Version: 0.1.1-dev
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Author: WEM
@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-define( 'WEM_ML_VERSION', '0.1.0' );
+define( 'WEM_ML_VERSION', '0.1.1-dev' );
 define( 'WEM_ML_DB_VERSION', '0.1.0' );
 define( 'WEM_ML_FILE', __FILE__ );
 define( 'WEM_ML_DIR', plugin_dir_path( __FILE__ ) );
@@ -30,6 +30,7 @@ require_once WEM_ML_DIR . 'includes/class-seo.php';
 if ( is_admin() ) {
     require_once WEM_ML_DIR . 'admin/class-admin.php';
     require_once WEM_ML_DIR . 'admin/class-diagnostics.php';
+    require_once WEM_ML_DIR . 'admin/class-elementor-lab.php';
 }
 
 register_activation_hook( __FILE__, array( 'WEM_ML_Schema', 'install' ) );
@@ -44,4 +45,5 @@ WEM_ML_SEO::init();
 if ( is_admin() ) {
     WEM_ML_Admin::init();
     WEM_ML_Diagnostics::init();
+    WEM_ML_Elementor_Lab::init();
 }
