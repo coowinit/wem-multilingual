@@ -12,7 +12,17 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class WEM_ML_Diagnostics {
 
+    /**
+     * Register diagnostics hooks.
+     */
     public static function init() {
+        add_action( 'admin_menu', array( __CLASS__, 'register_menu' ) );
+    }
+
+    /**
+     * Register the diagnostics page under Tools.
+     */
+    public static function register_menu() {
         add_management_page(
             'WEM ML Diagnostics',
             'WEM ML Diagnostics',
@@ -22,6 +32,9 @@ final class WEM_ML_Diagnostics {
         );
     }
 
+    /**
+     * Render the diagnostics page.
+     */
     public static function render_page() {
         if ( ! current_user_can( 'manage_options' ) ) {
             return;
