@@ -308,7 +308,27 @@ final class WEM_ML_Router {
         flush_rewrite_rules();
     }
 
+    /**
+     * Remove WEM rewrite rules from the current rewrite collection before
+     * flushing persisted rules. During a deactivation request the plugin has
+     * already run on init, so flushing without removing these entries can
+     * accidentally persist the multilingual routes after the plugin is off.
+     */
     public static function deactivate() {
+        global $wp_rewrite;
+
+        if ( $wp_rewrite instanceof WP_Rewrite ) {
+            if ( isset( $wp_rewrite->extra_rules_top ) && is_array( $wp_rewrite->extra_rules_top ) ) {
+                unset( $wp_rewrite->extra_rules_top['^es/?$'] );
+                unset( $wp_rewrite->extra_rules_top['^es/(.+?)/?$'] );
+            }
+
+            if ( isset( $wp_rewrite->extra_rules ) && is_array( $wp_rewrite->extra_rules ) ) {
+                unset( $wp_rewrite->extra_rules['^es/?$'] );
+                unset( $wp_rewrite->extra_rules['^es/(.+?)/?$'] );
+            }
+        }
+
         flush_rewrite_rules();
     }
 }
