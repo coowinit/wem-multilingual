@@ -1,8 +1,10 @@
 <?php
 /**
- * Elementor Structured Translation Lab - Step 1.
+ * Elementor Structured Translation Lab.
  *
- * Read-only environment probe and source discovery for _elementor_data.
+ * v0.1.1 Step 1: read-only environment/source discovery.
+ * v0.1.1 Step 2: adapter registry + exact translatable field discovery.
+ *
  * No translation writes, no runtime overlay, no Elementor source mutation.
  */
 
@@ -33,12 +35,11 @@ final class WEM_ML_Elementor_Lab {
 
         $object_id = isset( $_GET['object_id'] ) ? absint( $_GET['object_id'] ) : 0;
         $post      = $object_id > 0 ? get_post( $object_id ) : null;
-
         ?>
         <div class="wrap">
             <h1>WEM ML Elementor Lab</h1>
-            <p><strong>v0.1.1 · Step 1 · Read-only Source Discovery</strong></p>
-            <p>本页只读取 <code>_elementor_data</code>，用于验证 Elementor 环境、JSON 可解析性、Source JSON Hash 与 Widget 结构。不会保存译文，也不会修改 Elementor Source JSON。</p>
+            <p><strong>v0.1.1 · Step 2 · Adapter Registry + Exact Source Discovery</strong></p>
+            <p>本页继续只读 <code>_elementor_data</code>。Step 2 在 Step 1 Widget Discovery 基础上，只通过 Adapter Registry 精确读取 <code>heading.title</code> 与 <code>button.text</code>，不会登记 Translation Unit、不会保存译文、不会修改 Elementor Source JSON。</p>
 
             <h2>1. 选择测试对象</h2>
             <form method="get" action="<?php echo esc_url( admin_url( 'tools.php' ) ); ?>">
@@ -71,20 +72,21 @@ final class WEM_ML_Elementor_Lab {
     }
 
     private static function render_probe( $post ) {
-        $object_id          = (int) $post->ID;
-        $elementor_active   = did_action( 'elementor/loaded' ) || class_exists( '\\Elementor\\Plugin' );
-        $edit_mode          = (string) get_post_meta( $object_id, '_elementor_edit_mode', true );
-        $raw_data           = get_post_meta( $object_id, '_elementor_data', true );
-        $has_data           = is_string( $raw_data ) && '' !== trim( $raw_data );
-        $decoded            = $has_data ? json_decode( $raw_data, true ) : null;
-        $json_error         = $has_data ? json_last_error_msg() : 'No _elementor_data';
-        $json_valid         = $has_data && JSON_ERROR_NONE === json_last_error() && is_array( $decoded );
-        $source_json_hash   = $has_data ? hash( 'sha256', $raw_data ) : '';
-        $is_elementor_page  = 'builder' === $edit_mode || $has_data;
-        $widgets            = array();
+        $object_id         = (int) $post->ID;
+        $elementor_active  = did_action( 'elementor/loaded' ) || class_exists( '\\Elementor\\Plugin' );
+        $edit_mode         = (string) get_post_meta( $object_id, '_elementor_edit_mode', true );
+        $raw_data          = get_post_meta( $object_id, '_elementor_data', true );
+        $has_data          = is_string( $raw_data ) && '' !== trim( $raw_data );
+        $decoded           = $has_data ? json_decode( $raw_data, true ) : null;
+        $json_error        = $has_data ? json_last_error_msg() : 'No _elementor_data';
+        $json_valid        = $has_data && JSON_ERROR_NONE === json_last_error() && is_array( $decoded );
+        $source_json_hash  = $has_data ? hash( 'sha256', $raw_data ) : '';
+        $is_elementor_page = 'builder' === $edit_mode || $has_data;
+        $widgets           = array();
+        $source_fields     = array();
 
         if ( $json_valid ) {
-            self::walk_elements( $decoded, $widgets, array() );
+            self::walk_elements( $decoded, $widgets, $source_fields, array(), $object_id );
         }
 
         $heading_count = 0;
@@ -116,12 +118,16 @@ final class WEM_ML_Elementor_Lab {
                 'detail' => $json_valid ? 'JSON decoded successfully' : $json_error,
             ),
             array(
+                'label'  => 'Adapter Registry Loaded',
+                'status' => class_exists( 'WEM_ML_Elementor_Adapter_Registry' ) ? 'pass' : 'fail',
+                'detail' => class_exists( 'WEM_ML_Elementor_Adapter_Registry' ) ? 'heading.title + button.text registered' : 'registry missing',
+            ),
+            array(
                 'label'  => 'Read-only Mode',
                 'status' => 'pass',
                 'detail' => '本 Lab 不执行 update_post_meta() / Elementor document save / translation write。',
             ),
         );
-
         ?>
         <table class="widefat striped" style="max-width:1200px;margin-top:12px">
             <tbody>
@@ -138,13 +144,14 @@ final class WEM_ML_Elementor_Lab {
                 <tr><th>Discovered Widgets</th><td><code><?php echo esc_html( (string) count( $widgets ) ); ?></code></td></tr>
                 <tr><th>Heading Candidates</th><td><code><?php echo esc_html( (string) $heading_count ); ?></code></td></tr>
                 <tr><th>Button Candidates</th><td><code><?php echo esc_html( (string) $button_count ); ?></code></td></tr>
+                <tr><th>Exact Translatable Fields</th><td><code><?php echo esc_html( (string) count( $source_fields ) ); ?></code></td></tr>
             </tbody>
         </table>
 
         <?php self::render_checks( $checks ); ?>
 
         <h2 style="margin-top:28px">3. Read-only Widget Discovery</h2>
-        <p>这里只枚举 Elementor Widget 的 Locator 信息与当前 settings keys；Step 1 不登记 Translation Unit。</p>
+        <p>保留 Step 1 的 Widget Locator 观察表。Tree Path 仍只作为诊断信息，不作为永久 Translation Identity。</p>
 
         <?php if ( ! $json_valid ) : ?>
             <div class="notice notice-error inline"><p>Elementor JSON 无法解析，因此停止 Widget Discovery。没有执行任何回退猜测或字符串扫描。</p></div>
@@ -165,7 +172,7 @@ final class WEM_ML_Elementor_Lab {
                 <tbody>
                 <?php foreach ( $widgets as $index => $widget ) : ?>
                     <?php
-                    $candidate = in_array( $widget['widget_type'], array( 'heading', 'button' ), true ) ? 'v0.1.1 target' : 'observe only';
+                    $candidate = WEM_ML_Elementor_Adapter_Registry::get_fields_for_widget( $widget['widget_type'] ) ? 'v0.1.1 target' : 'observe only';
                     ?>
                     <tr>
                         <td><?php echo esc_html( (string) ( $index + 1 ) ); ?></td>
@@ -180,11 +187,47 @@ final class WEM_ML_Elementor_Lab {
             </table>
         <?php endif; ?>
 
-        <p class="description" style="margin-top:14px"><strong>Step 1 验收重点：</strong>Source JSON 可读取且 JSON Valid；Heading / Button 能在列表中识别；重复扫描时 Source JSON SHA-256 保持不变。</p>
+        <h2 style="margin-top:28px">4. Adapter-scoped Source Discovery</h2>
+        <p>这里只读取 Adapter Registry 明确登记的字段：<code>heading.title</code> 与 <code>button.text</code>。未知字段不会自动扫描或猜测。</p>
+
+        <?php if ( empty( $source_fields ) ) : ?>
+            <div class="notice notice-warning inline"><p>当前对象没有发现可由 v0.1.1 Adapter 处理的非空 Source Field。</p></div>
+        <?php else : ?>
+            <table class="widefat striped" style="max-width:1500px">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Widget Locator</th>
+                        <th>Widget Type</th>
+                        <th>Setting Path</th>
+                        <th>Mode</th>
+                        <th>Source Text</th>
+                        <th>Source Hash</th>
+                        <th>Experimental Context Key</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ( $source_fields as $index => $field ) : ?>
+                    <tr>
+                        <td><?php echo esc_html( (string) ( $index + 1 ) ); ?></td>
+                        <td><code><?php echo esc_html( $field['element_id'] ); ?></code><br><small><?php echo esc_html( $field['tree_path'] ); ?></small></td>
+                        <td><code><?php echo esc_html( $field['widget_type'] ); ?></code></td>
+                        <td><code><?php echo esc_html( $field['setting_path'] ); ?></code></td>
+                        <td><code><?php echo esc_html( $field['mode'] ); ?></code></td>
+                        <td><?php echo esc_html( $field['source_text'] ); ?></td>
+                        <td><code title="<?php echo esc_attr( $field['source_hash'] ); ?>"><?php echo esc_html( substr( $field['source_hash'], 0, 16 ) . '…' ); ?></code></td>
+                        <td><code><?php echo esc_html( $field['context_key'] ); ?></code></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php endif; ?>
+
+        <p class="description" style="margin-top:14px"><strong>Step 2 验收重点：</strong>5 个 Heading 应精确发现 <code>title</code>，1 个 Button 应精确发现 <code>text</code>；Source Text 应与 Elementor 编辑器一致；重复扫描时 Source Hash 与 Source JSON SHA-256 保持不变。本步仍不写入 Translation Repository。</p>
         <?php
     }
 
-    private static function walk_elements( $elements, &$widgets, $path ) {
+    private static function walk_elements( $elements, &$widgets, &$source_fields, $path, $object_id ) {
         if ( ! is_array( $elements ) ) {
             return;
         }
@@ -201,6 +244,7 @@ final class WEM_ML_Elementor_Lab {
 
             $current_path   = $path;
             $current_path[] = (string) $index;
+            $tree_path      = implode( '.', $current_path );
 
             if ( 'widget' === $element_type || '' !== $widget_type ) {
                 $setting_keys = array_keys( $settings );
@@ -209,20 +253,44 @@ final class WEM_ML_Elementor_Lab {
                 $widgets[] = array(
                     'element_id'   => $element_id,
                     'widget_type'  => $widget_type ? $widget_type : 'unknown',
-                    'tree_path'    => implode( '.', $current_path ),
+                    'tree_path'    => $tree_path,
                     'setting_keys' => $setting_keys,
                 );
+
+                $discovered = WEM_ML_Elementor_Adapter_Registry::discover_fields( $widget_type, $settings );
+
+                foreach ( $discovered as $field ) {
+                    $source_text = (string) $field['source_text'];
+
+                    $source_fields[] = array(
+                        'element_id'   => $element_id,
+                        'widget_type'  => $widget_type,
+                        'tree_path'    => $tree_path,
+                        'setting_path' => (string) $field['setting_path'],
+                        'mode'         => (string) $field['mode'],
+                        'source_text'  => $source_text,
+                        'source_hash'  => WEM_ML_Translation_Repository::hash_text( $source_text ),
+                        // Experimental only: element_id is still a Locator, not a locked permanent identity model.
+                        'context_key'  => sprintf(
+                            'elementor:%d:%s:%s:%s',
+                            absint( $object_id ),
+                            $element_id,
+                            $widget_type,
+                            (string) $field['setting_path']
+                        ),
+                    );
+                }
             }
 
             if ( isset( $element['elements'] ) && is_array( $element['elements'] ) ) {
-                self::walk_elements( $element['elements'], $widgets, $current_path );
+                self::walk_elements( $element['elements'], $widgets, $source_fields, $current_path, $object_id );
             }
         }
     }
 
     private static function render_checks( $checks ) {
         ?>
-        <h2 style="margin-top:24px">Step 1 自动检查项</h2>
+        <h2 style="margin-top:24px">Step 2 自动检查项</h2>
         <table class="widefat striped" style="max-width:1200px">
             <thead><tr><th style="width:260px">Check</th><th style="width:100px">Status</th><th>Detail</th></tr></thead>
             <tbody>
