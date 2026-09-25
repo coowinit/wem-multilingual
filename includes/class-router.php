@@ -32,6 +32,7 @@ final class WEM_ML_Router {
         add_action( 'init', array( __CLASS__, 'register_rewrite_rules' ) );
         add_filter( 'query_vars', array( __CLASS__, 'register_query_vars' ) );
         add_filter( 'request', array( __CLASS__, 'resolve_prefixed_request' ) );
+        add_filter( 'redirect_canonical', array( __CLASS__, 'preserve_multilingual_route' ), 10, 2 );
         add_filter( 'wp_headers', array( __CLASS__, 'add_debug_headers' ) );
     }
 
@@ -119,6 +120,29 @@ final class WEM_ML_Router {
         }
 
         return $query_vars;
+    }
+
+    /**
+     * Prevent WordPress from redirecting a successfully resolved WEM target
+     * language request back to the source-language permalink.
+     *
+     * This is deliberately narrow: canonical redirects remain untouched for
+     * ordinary/source-language requests and for unresolved WEM routes.
+     *
+     * @param string|false $redirect_url  Canonical redirect URL.
+     * @param string       $requested_url Requested URL.
+     * @return string|false
+     */
+    public static function preserve_multilingual_route( $redirect_url, $requested_url ) {
+        if ( ! self::$route_matched || self::$resolved_object_id <= 0 ) {
+            return $redirect_url;
+        }
+
+        if ( 'es' !== WEM_ML_Language_Context::get_current_language() ) {
+            return $redirect_url;
+        }
+
+        return false;
     }
 
     /**
