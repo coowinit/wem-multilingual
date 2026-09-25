@@ -14,20 +14,98 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class WEM_ML_Title_Overlay {
 
-    /** @var string */
-    private static $last_state = '';
-
     /**
      * Register runtime hooks.
      */
     public static function init() {
         add_filter( 'the_title', array( __CLASS__, 'filter_title' ), 20, 2 );
-        add_filter( 'wp_headers', array( __CLASS__, 'add_debug_header' ) );
     }
 
     /**
-     * Overlay a Page/Post title in Spanish context when the translation is
-     * published, reviewed and current against the live source title.
+     * Evaluate whether a post_title translation is safe to overlay.
+     *
+     * This method is deliberately independent of the current request context so
+     * the exact same decision engine can be reused by wp-admin diagnostics.
+     *
+     * @param int    $post_id  WordPress Page/Post ID.
+     * @param string $language Target language. v0.1.0: es.
+     * @return array<string,mixed>
+     */
+    public static function evaluate( $post_id, $language = 'es' ) {
+        $post_id  = absint( $post_id );
+        $language = sanitize_key( $language );
+        $post     = $post_id > 0 ? get_post( $post_id ) : null;
+
+        $result = array(
+            'state'                  => 'invalid-object',
+            'can_overlay'            => false,
+            'source_title'           => '',
+            'translated_title'       => '',
+            'live_source_hash'       => '',
+            'stored_source_hash'     => '',
+            'translated_from_hash'   => '',
+            'object_language_status' => 'draft',
+        );
+
+        if ( ! $post || ! in_array( $post->post_type, array( 'page', 'post' ), true ) ) {
+            return $result;
+        }
+
+        $result['source_title']     = (string) $post->post_title;
+        $result['live_source_hash'] = WEM_ML_Translation_Repository::hash_text( (string) $post->post_title );
+
+        if ( 'es' !== $language ) {
+            $result['state'] = 'unsupported-language';
+            return $result;
+        }
+
+        $status = WEM_ML_Object_State::get_status( $post->post_type, $post_id, $language );
+        $result['object_language_status'] = $status;
+
+        if ( 'published' !== $status ) {
+            $result['state'] = 'not-published';
+            return $result;
+        }
+
+        $context_key = sprintf( 'post:%d:title', $post_id );
+        $source      = WEM_ML_Translation_Repository::get_source_by_context( $context_key );
+
+        if ( ! $source || 'active' !== $source->state ) {
+            $result['state'] = 'missing-source';
+            return $result;
+        }
+
+        $result['stored_source_hash'] = (string) $source->source_hash;
+
+        $translation = WEM_ML_Translation_Repository::get_translation( (int) $source->id, $language );
+
+        if ( ! $translation || 'reviewed' !== $translation->status || '' === trim( (string) $translation->translated_text ) ) {
+            $result['state'] = 'missing-translation';
+            return $result;
+        }
+
+        $result['translated_title']     = (string) $translation->translated_text;
+        $result['translated_from_hash'] = (string) $translation->translated_from_hash;
+
+        // Protect against an unsynchronised source edit.
+        if ( ! hash_equals( (string) $source->source_hash, (string) $result['live_source_hash'] ) ) {
+            $result['state'] = 'source-drift';
+            return $result;
+        }
+
+        if ( WEM_ML_Translation_Repository::is_stale( $source, $translation ) ) {
+            $result['state'] = 'stale';
+            return $result;
+        }
+
+        $result['state']       = 'applied';
+        $result['can_overlay'] = true;
+
+        return $result;
+    }
+
+    /**
+     * Overlay a Page/Post title in Spanish context.
      *
      * @param string $title   Current title.
      * @param int    $post_id Post ID.
@@ -38,68 +116,12 @@ final class WEM_ML_Title_Overlay {
             return $title;
         }
 
-        $post_id = absint( $post_id );
+        $evaluation = self::evaluate( $post_id, 'es' );
 
-        if ( $post_id <= 0 ) {
-            return $title;
+        if ( ! empty( $evaluation['can_overlay'] ) ) {
+            return (string) $evaluation['translated_title'];
         }
 
-        $post = get_post( $post_id );
-
-        if ( ! $post || ! in_array( $post->post_type, array( 'page', 'post' ), true ) ) {
-            return $title;
-        }
-
-        if ( ! WEM_ML_Object_State::is_published( $post->post_type, $post_id, 'es' ) ) {
-            self::$last_state = 'not-published';
-            return $title;
-        }
-
-        $context_key = sprintf( 'post:%d:title', $post_id );
-        $source      = WEM_ML_Translation_Repository::get_source_by_context( $context_key );
-
-        if ( ! $source || 'active' !== $source->state ) {
-            self::$last_state = 'missing-source';
-            return $title;
-        }
-
-        $translation = WEM_ML_Translation_Repository::get_translation( (int) $source->id, 'es' );
-
-        if ( ! $translation || 'reviewed' !== $translation->status || '' === trim( (string) $translation->translated_text ) ) {
-            self::$last_state = 'missing-translation';
-            return $title;
-        }
-
-        // Protect against an unsynchronised source edit. The live WordPress
-        // title must still match the source version represented by the unit.
-        $live_source_hash = WEM_ML_Translation_Repository::hash_text( (string) $post->post_title );
-
-        if ( ! hash_equals( (string) $source->source_hash, $live_source_hash ) ) {
-            self::$last_state = 'source-drift';
-            return $title;
-        }
-
-        if ( WEM_ML_Translation_Repository::is_stale( $source, $translation ) ) {
-            self::$last_state = 'stale';
-            return $title;
-        }
-
-        self::$last_state = 'applied';
-
-        return (string) $translation->translated_text;
-    }
-
-    /**
-     * Diagnostic header for the current request.
-     *
-     * @param array<string,string> $headers Response headers.
-     * @return array<string,string>
-     */
-    public static function add_debug_header( $headers ) {
-        if ( 'es' === WEM_ML_Language_Context::get_current_language() && '' !== self::$last_state ) {
-            $headers['X-WEM-ML-Title-Overlay'] = self::$last_state;
-        }
-
-        return $headers;
+        return $title;
     }
 }
