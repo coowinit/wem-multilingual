@@ -25,6 +25,7 @@ require_once WEM_ML_DIR . 'includes/class-translation-repository.php';
 require_once WEM_ML_DIR . 'includes/class-object-state.php';
 require_once WEM_ML_DIR . 'includes/class-router.php';
 require_once WEM_ML_DIR . 'includes/class-title-overlay.php';
+require_once WEM_ML_DIR . 'includes/class-seo.php';
 
 if ( is_admin() ) {
     require_once WEM_ML_DIR . 'admin/class-admin.php';
@@ -38,6 +39,7 @@ register_deactivation_hook( __FILE__, array( 'WEM_ML_Router', 'deactivate' ) );
 WEM_ML_Language_Context::init();
 WEM_ML_Router::init();
 WEM_ML_Title_Overlay::init();
+WEM_ML_SEO::init();
 
 if ( is_admin() ) {
     WEM_ML_Admin::init();
