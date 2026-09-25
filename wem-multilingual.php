@@ -35,6 +35,7 @@ if ( is_admin() ) {
     require_once WEM_ML_DIR . 'admin/class-diagnostics.php';
     require_once WEM_ML_DIR . 'admin/class-elementor-lab.php';
     require_once WEM_ML_DIR . 'admin/class-elementor-source-sync-lab.php';
+    require_once WEM_ML_DIR . 'admin/class-elementor-translation-lab.php';
 }
 
 register_activation_hook( __FILE__, array( 'WEM_ML_Schema', 'install' ) );
@@ -51,4 +52,5 @@ if ( is_admin() ) {
     WEM_ML_Diagnostics::init();
     WEM_ML_Elementor_Lab::init();
     WEM_ML_Elementor_Source_Sync_Lab::init();
+    WEM_ML_Elementor_Translation_Lab::init();
 }
