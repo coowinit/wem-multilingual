@@ -20,8 +20,9 @@ define( 'WEM_ML_DIR', plugin_dir_path( __FILE__ ) );
 
 require_once WEM_ML_DIR . 'includes/class-wem-ml-schema.php';
 require_once WEM_ML_DIR . 'includes/class-language-context.php';
-require_once WEM_ML_DIR . 'includes/class-router.php';
 require_once WEM_ML_DIR . 'includes/class-slug-repository.php';
+require_once WEM_ML_DIR . 'includes/class-translation-repository.php';
+require_once WEM_ML_DIR . 'includes/class-router.php';
 
 if ( is_admin() ) {
     require_once WEM_ML_DIR . 'admin/class-admin.php';
