@@ -4,16 +4,12 @@
  *
  * v0.1.0 Experimental Core.
  *
- * Step 4B adds the real translated-slug route model:
- *
- * /about-evodek/       -> source request
- * /es/acerca-de-evodek/ -> same WordPress object in Spanish context
- *
- * Route source of truth remains:
+ * Route source of truth:
  * object_id + language + translated_slug
  *
- * The Step 3 source-path pass-through remains as a temporary experimental
- * fallback so already validated routes keep working during development.
+ * Step 6B adds Object Language State as the publication gate:
+ * draft     -> target-language route is not public
+ * published -> target-language route may resolve and generate permalinks
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -30,6 +26,12 @@ final class WEM_ML_Router {
 
     /** @var string */
     private static $resolution_mode = '';
+
+    /** @var string */
+    private static $language_state = '';
+
+    /** @var bool */
+    private static $route_gated = false;
 
     /**
      * Register hooks.
@@ -83,8 +85,10 @@ final class WEM_ML_Router {
      * Resolve /es/{path}/ to the existing source object.
      *
      * Resolution order:
-     * 1. translated slug repository (real v0.1.0 route model)
-     * 2. source-path pass-through (Step 3 experimental fallback)
+     * 1. translated slug repository
+     * 2. source-path pass-through (temporary experimental fallback)
+     *
+     * Every resolved target-language object must pass Object Language State.
      *
      * @param array<string,mixed> $query_vars Parsed request vars.
      * @return array<string,mixed>
@@ -100,15 +104,14 @@ final class WEM_ML_Router {
             ? trim( (string) $query_vars['wem_ml_path'], '/' )
             : '';
 
-        // /es/ represents the same front-page request in Spanish context.
+        // /es/ represents the site's configured front page, but only when
+        // that object's Spanish language state is explicitly published.
         if ( '' === $path ) {
-            self::apply_front_page_query( $query_vars );
-            self::$resolution_mode = self::$resolved_object_id > 0 ? 'front-page' : '';
+            self::resolve_front_page( $query_vars );
             return $query_vars;
         }
 
-        // Step 4B: translated slugs currently represent one object slug.
-        // Multi-level translated parent paths are deliberately deferred.
+        // Real translated-slug route model.
         if ( false === strpos( $path, '/' ) ) {
             $resolved = WEM_ML_Slug_Repository::resolve( 'es', $path );
 
@@ -120,15 +123,20 @@ final class WEM_ML_Router {
                     && $post->post_type === $resolved->object_type
                     && in_array( $post->post_type, array( 'page', 'post' ), true )
                 ) {
-                    self::$resolved_object_id = (int) $resolved->object_id;
-                    self::$resolution_mode    = 'translated-slug';
+                    self::$resolution_mode = 'translated-slug';
+
+                    if ( ! self::allow_target_object( $post ) ) {
+                        return $query_vars;
+                    }
+
+                    self::$resolved_object_id = (int) $post->ID;
                     self::apply_object_query( $query_vars, $post );
                     return $query_vars;
                 }
             }
         }
 
-        // Step 3 fallback: resolve the prefixed source path through WordPress.
+        // Temporary Step 3 fallback: resolve the prefixed source path through WordPress.
         $source_url = home_url( user_trailingslashit( $path ) );
         $object_id  = url_to_postid( $source_url );
 
@@ -142,11 +150,41 @@ final class WEM_ML_Router {
             return $query_vars;
         }
 
-        self::$resolved_object_id = (int) $object_id;
-        self::$resolution_mode    = 'source-path';
+        self::$resolution_mode = 'source-path';
+
+        if ( ! self::allow_target_object( $post ) ) {
+            return $query_vars;
+        }
+
+        self::$resolved_object_id = (int) $post->ID;
         self::apply_object_query( $query_vars, $post );
 
         return $query_vars;
+    }
+
+    /**
+     * Apply Object Language State publication gate.
+     *
+     * Missing rows are treated as draft by WEM_ML_Object_State.
+     *
+     * @param WP_Post $post Source WordPress object.
+     * @return bool
+     */
+    private static function allow_target_object( $post ) {
+        $status = WEM_ML_Object_State::get_status(
+            $post->post_type,
+            (int) $post->ID,
+            'es'
+        );
+
+        self::$language_state = $status;
+
+        if ( 'published' !== $status ) {
+            self::$route_gated = true;
+            return false;
+        }
+
+        return true;
     }
 
     /**
@@ -172,12 +210,15 @@ final class WEM_ML_Router {
      * Prevent WordPress from redirecting a successfully resolved WEM target
      * language request back to the source-language permalink.
      *
+     * Draft/gated routes are deliberately excluded so WordPress can complete
+     * the normal 404 request lifecycle.
+     *
      * @param string|false $redirect_url  Canonical redirect URL.
      * @param string       $requested_url Requested URL.
      * @return string|false
      */
     public static function preserve_multilingual_route( $redirect_url, $requested_url ) {
-        if ( ! self::$route_matched || self::$resolved_object_id <= 0 ) {
+        if ( ! self::$route_matched || self::$resolved_object_id <= 0 || self::$route_gated ) {
             return $redirect_url;
         }
 
@@ -191,9 +232,9 @@ final class WEM_ML_Router {
     /**
      * Filter Page permalinks in Spanish context.
      *
-     * @param string $url       Original permalink.
-     * @param int    $post_id   Page ID.
-     * @param bool   $sample    Whether this is a sample permalink.
+     * @param string $url     Original permalink.
+     * @param int    $post_id Page ID.
+     * @param bool   $sample  Whether this is a sample permalink.
      * @return string
      */
     public static function filter_page_link( $url, $post_id, $sample ) {
@@ -207,8 +248,8 @@ final class WEM_ML_Router {
     /**
      * Filter Post permalinks in Spanish context.
      *
-     * @param string  $url   Original permalink.
-     * @param WP_Post $post  Post object.
+     * @param string  $url       Original permalink.
+     * @param WP_Post $post      Post object.
      * @param bool    $leavename Whether to keep the post name token.
      * @return string
      */
@@ -221,11 +262,10 @@ final class WEM_ML_Router {
     }
 
     /**
-     * Build the target-language permalink when a translated slug exists.
+     * Build the target-language permalink only for explicitly published objects.
      *
-     * No mapping means the original WordPress permalink is preserved.
-     * This avoids inventing multilingual URLs for objects that have not been
-     * explicitly registered in the route repository.
+     * No slug mapping or draft state means the original WordPress permalink is
+     * preserved. This prevents draft language versions from being advertised.
      *
      * @param string $original_url Original WordPress permalink.
      * @param string $object_type  page or post.
@@ -234,6 +274,10 @@ final class WEM_ML_Router {
      */
     private static function get_target_permalink( $original_url, $object_type, $object_id ) {
         if ( 'es' !== WEM_ML_Language_Context::get_current_language() ) {
+            return $original_url;
+        }
+
+        if ( ! WEM_ML_Object_State::is_published( $object_type, $object_id, 'es' ) ) {
             return $original_url;
         }
 
@@ -247,13 +291,11 @@ final class WEM_ML_Router {
     }
 
     /**
-     * Make /es/ reuse the site's existing front-page configuration.
+     * Resolve /es/ to the configured front page when published for Spanish.
      *
      * @param array<string,mixed> $query_vars Parsed request vars, by reference.
      */
-    private static function apply_front_page_query( &$query_vars ) {
-        unset( $query_vars['wem_ml_path'] );
-
+    private static function resolve_front_page( &$query_vars ) {
         if ( 'page' !== get_option( 'show_on_front' ) ) {
             return;
         }
@@ -264,12 +306,25 @@ final class WEM_ML_Router {
             return;
         }
 
+        $post = get_post( $front_page_id );
+
+        if ( ! $post || 'page' !== $post->post_type ) {
+            return;
+        }
+
+        self::$resolution_mode = 'front-page';
+
+        if ( ! self::allow_target_object( $post ) ) {
+            return;
+        }
+
         self::$resolved_object_id = $front_page_id;
-        $query_vars['page_id']    = $front_page_id;
+        unset( $query_vars['wem_ml_path'] );
+        $query_vars['page_id'] = $front_page_id;
     }
 
     /**
-     * Experimental diagnostic headers for routing validation.
+     * Experimental diagnostic headers for routing/state validation.
      *
      * @param array<string,string> $headers Response headers.
      * @return array<string,string>
@@ -279,9 +334,13 @@ final class WEM_ML_Router {
             return $headers;
         }
 
-        $headers['X-WEM-ML-Route'] = self::$resolved_object_id > 0
-            ? 'resolved'
-            : 'unresolved';
+        if ( self::$route_gated ) {
+            $headers['X-WEM-ML-Route'] = 'gated';
+        } else {
+            $headers['X-WEM-ML-Route'] = self::$resolved_object_id > 0
+                ? 'resolved'
+                : 'unresolved';
+        }
 
         if ( self::$resolved_object_id > 0 ) {
             $headers['X-WEM-ML-Object-ID'] = (string) self::$resolved_object_id;
@@ -289,6 +348,10 @@ final class WEM_ML_Router {
 
         if ( '' !== self::$resolution_mode ) {
             $headers['X-WEM-ML-Route-Mode'] = self::$resolution_mode;
+        }
+
+        if ( '' !== self::$language_state ) {
+            $headers['X-WEM-ML-State'] = self::$language_state;
         }
 
         return $headers;
