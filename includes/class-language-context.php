@@ -40,7 +40,7 @@ final class WEM_ML_Language_Context {
     public static function init() {
         self::$current_language = self::detect_from_request_uri();
 
-        add_action( 'send_headers', array( __CLASS__, 'send_debug_header' ) );
+        add_filter( 'wp_headers', array( __CLASS__, 'add_debug_header' ) );
     }
 
     /**
@@ -142,15 +142,17 @@ final class WEM_ML_Language_Context {
     }
 
     /**
-     * Experimental diagnostic header used to verify Language Context.
+     * Experimental diagnostic header used only to verify Language Context.
      *
-     * This header does not control routing or caching.
+     * Adding the value through WordPress' wp_headers filter is more reliable
+     * than sending an additional raw PHP header later in the request lifecycle.
+     *
+     * @param array $headers Response headers prepared by WordPress.
+     * @return array
      */
-    public static function send_debug_header() {
-        if ( headers_sent() ) {
-            return;
-        }
+    public static function add_debug_header( $headers ) {
+        $headers['X-WEM-ML-Language'] = self::$current_language;
 
-        header( 'X-WEM-ML-Language: ' . self::$current_language );
+        return $headers;
     }
 }
