@@ -22,16 +22,19 @@ require_once WEM_ML_DIR . 'includes/class-wem-ml-schema.php';
 require_once WEM_ML_DIR . 'includes/class-language-context.php';
 require_once WEM_ML_DIR . 'includes/class-slug-repository.php';
 require_once WEM_ML_DIR . 'includes/class-translation-repository.php';
+require_once WEM_ML_DIR . 'includes/class-source-unit-repository.php';
 require_once WEM_ML_DIR . 'includes/class-object-state.php';
 require_once WEM_ML_DIR . 'includes/class-router.php';
 require_once WEM_ML_DIR . 'includes/class-title-overlay.php';
 require_once WEM_ML_DIR . 'includes/class-seo.php';
 require_once WEM_ML_DIR . 'includes/elementor/class-elementor-adapter-registry.php';
+require_once WEM_ML_DIR . 'includes/elementor/class-elementor-source-discovery.php';
 
 if ( is_admin() ) {
     require_once WEM_ML_DIR . 'admin/class-admin.php';
     require_once WEM_ML_DIR . 'admin/class-diagnostics.php';
     require_once WEM_ML_DIR . 'admin/class-elementor-lab.php';
+    require_once WEM_ML_DIR . 'admin/class-elementor-source-sync-lab.php';
 }
 
 register_activation_hook( __FILE__, array( 'WEM_ML_Schema', 'install' ) );
@@ -47,4 +50,5 @@ if ( is_admin() ) {
     WEM_ML_Admin::init();
     WEM_ML_Diagnostics::init();
     WEM_ML_Elementor_Lab::init();
+    WEM_ML_Elementor_Source_Sync_Lab::init();
 }
