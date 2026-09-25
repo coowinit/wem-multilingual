@@ -35,7 +35,7 @@ final class WEM_ML_Diagnostics {
         <div class="wrap">
             <h1>WEM ML Diagnostics</h1>
             <p><strong>Experimental Core · One-click Validation Lab</strong></p>
-            <p>自动识别 Source / Spanish URL，读取 Slug、State、Translation 与 Hash，并对前台路由做实时 HTTP 检查。</p>
+            <p>自动验证 Routing、State、Title Overlay 与 SEO Core。</p>
 
             <h2>1. 已登记对象：一键验证</h2>
             <?php self::render_quick_test_table( $mappings ); ?>
@@ -104,30 +104,33 @@ final class WEM_ML_Diagnostics {
     private static function render_validation_result( $post ) {
         $object_id         = (int) $post->ID;
         $object_type       = $post->post_type;
-        $source_permalink  = get_permalink( $post );
+        $source_permalink  = WEM_ML_Router::get_source_permalink( $object_id );
         $state             = WEM_ML_Object_State::get_status( $object_type, $object_id, 'es' );
         $slug              = WEM_ML_Slug_Repository::get_slug( $object_type, $object_id, 'es' );
         $candidate_spanish = $slug ? home_url( user_trailingslashit( 'es/' . $slug ) ) : '';
         $localized         = WEM_ML_Router::get_localized_permalink( $object_type, $object_id, 'es', $source_permalink );
         $evaluation        = WEM_ML_Title_Overlay::evaluate( $object_id, 'es' );
+        $seo_data          = WEM_ML_SEO::get_object_seo_data( $object_id );
         $source_probe      = self::probe_url( $source_permalink );
         $spanish_probe     = $candidate_spanish ? self::probe_url( $candidate_spanish ) : null;
-        $checks            = array();
 
-        $checks[] = self::check(
+        $core_checks = array();
+        $seo_checks  = array();
+
+        $core_checks[] = self::check(
             'Source URL 可访问',
             ! is_wp_error( $source_probe ) && 200 === $source_probe['code'],
             is_wp_error( $source_probe ) ? $source_probe->get_error_message() : 'HTTP ' . $source_probe['code']
         );
-        $checks[] = self::check( 'Spanish Slug 已登记', ! empty( $slug ), $slug ? $slug : 'missing' );
-        $checks[] = self::check( 'Spanish State = published', 'published' === $state, $state );
-        $checks[] = self::check( 'Title Overlay 数据状态 = applied', 'applied' === $evaluation['state'], (string) $evaluation['state'] );
-        $checks[] = self::check(
+        $core_checks[] = self::check( 'Spanish Slug 已登记', ! empty( $slug ), $slug ? $slug : 'missing' );
+        $core_checks[] = self::check( 'Spanish State = published', 'published' === $state, $state );
+        $core_checks[] = self::check( 'Title Overlay 数据状态 = applied', 'applied' === $evaluation['state'], (string) $evaluation['state'] );
+        $core_checks[] = self::check(
             'Live Source Hash = Stored Source Hash',
             '' !== $evaluation['stored_source_hash'] && hash_equals( (string) $evaluation['live_source_hash'], (string) $evaluation['stored_source_hash'] ),
             self::short_hash_pair( $evaluation['live_source_hash'], $evaluation['stored_source_hash'] )
         );
-        $checks[] = self::check(
+        $core_checks[] = self::check(
             'Stored Source Hash = Translation From Hash',
             '' !== $evaluation['translated_from_hash'] && hash_equals( (string) $evaluation['stored_source_hash'], (string) $evaluation['translated_from_hash'] ),
             self::short_hash_pair( $evaluation['stored_source_hash'], $evaluation['translated_from_hash'] )
@@ -135,7 +138,7 @@ final class WEM_ML_Diagnostics {
 
         if ( $candidate_spanish && $spanish_probe && ! is_wp_error( $spanish_probe ) ) {
             $expected_code = 'published' === $state ? 200 : 404;
-            $checks[] = self::check(
+            $core_checks[] = self::check(
                 'Spanish URL HTTP 状态符合 State',
                 $expected_code === $spanish_probe['code'],
                 'expected ' . $expected_code . ', actual ' . $spanish_probe['code']
@@ -145,37 +148,110 @@ final class WEM_ML_Diagnostics {
             $state_value  = self::header_value( $spanish_probe['headers'], 'x-wem-ml-state' );
             $object_value = self::header_value( $spanish_probe['headers'], 'x-wem-ml-object-id' );
 
-            $checks[] = self::header_check(
-                'Spanish Route Header',
-                $route_value,
-                'published' === $state ? 'resolved' : 'gated'
-            );
-            $checks[] = self::header_check( 'Spanish State Header', $state_value, $state );
+            $core_checks[] = self::header_check( 'Spanish Route Header', $route_value, 'published' === $state ? 'resolved' : 'gated' );
+            $core_checks[] = self::header_check( 'Spanish State Header', $state_value, $state );
 
             if ( 'published' === $state ) {
-                $checks[] = self::header_check( 'Spanish Object ID Header', $object_value, (string) $object_id );
+                $core_checks[] = self::header_check( 'Spanish Object ID Header', $object_value, (string) $object_id );
             }
 
             if ( 'applied' === $evaluation['state'] && '' !== $evaluation['translated_title'] ) {
                 $title_found = false !== strpos( (string) $spanish_probe['body'], (string) $evaluation['translated_title'] );
-                $checks[] = array(
+                $core_checks[] = array(
                     'label'  => 'Spanish HTML 中找到译文标题',
                     'status' => $title_found ? 'pass' : 'warn',
-                    'detail' => $title_found
-                        ? (string) $evaluation['translated_title']
-                        : '未在响应 HTML 中找到。若主题未通过 the_title() 输出标题，需要人工确认模板。',
+                    'detail' => $title_found ? (string) $evaluation['translated_title'] : '未在响应 HTML 中找到译文标题。',
                 );
             }
         } elseif ( $candidate_spanish && is_wp_error( $spanish_probe ) ) {
-            $checks[] = array(
+            $core_checks[] = array(
                 'label'  => 'Spanish URL 实时请求',
                 'status' => 'warn',
                 'detail' => $spanish_probe->get_error_message(),
             );
         }
 
+        if ( ! is_wp_error( $source_probe ) && $spanish_probe && ! is_wp_error( $spanish_probe ) ) {
+            $source_html  = (string) $source_probe['body'];
+            $spanish_html = (string) $spanish_probe['body'];
+
+            $source_canonicals  = self::extract_link_hrefs( $source_html, 'canonical' );
+            $spanish_canonicals = self::extract_link_hrefs( $spanish_html, 'canonical' );
+
+            $seo_checks[] = self::url_list_check( 'Source self canonical', $source_canonicals, $seo_data['canonical_en'] );
+            $seo_checks[] = self::url_list_check( 'Spanish self canonical', $spanish_canonicals, $seo_data['canonical_es'] );
+
+            if ( count( $source_canonicals ) > 1 ) {
+                $seo_checks[] = self::warning( 'Source canonical 唯一性', '检测到 ' . count( $source_canonicals ) . ' 个 canonical。' );
+            }
+            if ( count( $spanish_canonicals ) > 1 ) {
+                $seo_checks[] = self::warning( 'Spanish canonical 唯一性', '检测到 ' . count( $spanish_canonicals ) . ' 个 canonical。' );
+            }
+
+            $seo_checks[] = self::check_hreflang( 'Source hreflang=en', $source_html, 'en', $seo_data['hreflang_en'] );
+            $seo_checks[] = self::check_hreflang( 'Source hreflang=es', $source_html, 'es', $seo_data['hreflang_es'] );
+            $seo_checks[] = self::check_hreflang( 'Source hreflang=x-default', $source_html, 'x-default', $seo_data['x_default'] );
+            $seo_checks[] = self::check_hreflang( 'Spanish hreflang=en', $spanish_html, 'en', $seo_data['hreflang_en'] );
+            $seo_checks[] = self::check_hreflang( 'Spanish hreflang=es', $spanish_html, 'es', $seo_data['hreflang_es'] );
+            $seo_checks[] = self::check_hreflang( 'Spanish hreflang=x-default', $spanish_html, 'x-default', $seo_data['x_default'] );
+
+            $source_lang  = self::extract_html_lang( $source_html );
+            $spanish_lang = self::extract_html_lang( $spanish_html );
+
+            $seo_checks[] = self::check(
+                'Source html lang',
+                0 === stripos( $source_lang, 'en' ),
+                $source_lang ? $source_lang : 'missing'
+            );
+            $seo_checks[] = self::check(
+                'Spanish html lang',
+                'es' === strtolower( $spanish_lang ),
+                $spanish_lang ? $spanish_lang : 'missing'
+            );
+        } else {
+            $seo_checks[] = self::warning( 'SEO HTML 实时验证', 'Source 或 Spanish 页面无法完成回环请求。' );
+        }
+
+        $core_summary = self::summarize_checks( $core_checks );
+        $seo_summary  = self::summarize_checks( $seo_checks );
+
+        self::render_summary_notice( 'Step 7 Overall', $core_summary );
+        self::render_summary_notice( 'Step 8 SEO Overall', $seo_summary );
+        ?>
+        <table class="widefat striped" style="max-width:1200px;margin-top:14px">
+            <tbody>
+                <tr><th style="width:260px">Object</th><td><code><?php echo esc_html( $object_type . ' #' . $object_id ); ?></code></td></tr>
+                <tr><th>Source Title</th><td><?php echo esc_html( $post->post_title ); ?></td></tr>
+                <tr><th>Expected Spanish Title</th><td><?php echo $evaluation['translated_title'] ? esc_html( $evaluation['translated_title'] ) : '<em>—</em>'; ?></td></tr>
+                <tr><th>Source URL</th><td><code><?php echo esc_html( $source_permalink ); ?></code></td></tr>
+                <tr><th>Spanish URL</th><td><?php echo $candidate_spanish ? '<code>' . esc_html( $candidate_spanish ) . '</code>' : '<em>—</em>'; ?></td></tr>
+                <tr><th>Spanish State</th><td><code><?php echo esc_html( $state ); ?></code></td></tr>
+                <tr><th>Overlay Decision</th><td><code><?php echo esc_html( $evaluation['state'] ); ?></code></td></tr>
+                <tr><th>SEO Source Canonical</th><td><code><?php echo esc_html( $seo_data['canonical_en'] ); ?></code></td></tr>
+                <tr><th>SEO Spanish Canonical</th><td><code><?php echo esc_html( $seo_data['canonical_es'] ); ?></code></td></tr>
+            </tbody>
+        </table>
+
+        <?php self::render_checks_table( 'Step 7 自动检查项', $core_checks ); ?>
+        <?php self::render_checks_table( 'Step 8 SEO 自动检查项', $seo_checks ); ?>
+
+        <p class="description" style="margin-top:12px">说明：服务器回环请求在 SiteGround / Cloudflare 环境中偶尔可能拿不到自定义调试 Header，因此 Header 缺失记为 WARN；canonical / hreflang / html lang 直接从 HTML 检查。</p>
+        <?php
+    }
+
+    private static function render_checks_table( $title, $checks ) {
+        echo '<h3 style="margin-top:24px">' . esc_html( $title ) . '</h3>';
+        echo '<table class="widefat striped" style="max-width:1200px"><thead><tr><th style="width:100px">Result</th><th>Check</th><th>Detail</th></tr></thead><tbody>';
+        foreach ( $checks as $check ) {
+            echo '<tr><td>' . self::status_badge( $check['status'] ) . '</td><td>' . esc_html( $check['label'] ) . '</td><td><code>' . esc_html( $check['detail'] ) . '</code></td></tr>';
+        }
+        echo '</tbody></table>';
+    }
+
+    private static function summarize_checks( $checks ) {
         $failed = false;
         $warned = false;
+
         foreach ( $checks as $check ) {
             if ( 'fail' === $check['status'] ) {
                 $failed = true;
@@ -184,39 +260,15 @@ final class WEM_ML_Diagnostics {
             }
         }
 
-        $overall      = $failed ? 'FAIL' : ( $warned ? 'PASS with WARN' : 'PASS' );
-        $notice_class = $failed ? 'notice-error' : ( $warned ? 'notice-warning' : 'notice-success' );
-        ?>
-        <div class="notice <?php echo esc_attr( $notice_class ); ?> inline"><p><strong>Step 7 Overall: <?php echo esc_html( $overall ); ?></strong></p></div>
+        if ( $failed ) {
+            return 'FAIL';
+        }
+        return $warned ? 'PASS with WARN' : 'PASS';
+    }
 
-        <table class="widefat striped" style="max-width:1200px;margin-top:14px">
-            <tbody>
-                <tr><th style="width:260px">Object</th><td><code><?php echo esc_html( $object_type . ' #' . $object_id ); ?></code></td></tr>
-                <tr><th>Source Title</th><td><?php echo esc_html( $post->post_title ); ?></td></tr>
-                <tr><th>Expected Spanish Title</th><td><?php echo $evaluation['translated_title'] ? esc_html( $evaluation['translated_title'] ) : '<em>—</em>'; ?></td></tr>
-                <tr><th>Source URL</th><td><code><?php echo esc_html( $source_permalink ); ?></code></td></tr>
-                <tr><th>Spanish Candidate URL</th><td><?php echo $candidate_spanish ? '<code>' . esc_html( $candidate_spanish ) . '</code>' : '<em>—</em>'; ?></td></tr>
-                <tr><th>Localized Permalink Result</th><td><code><?php echo esc_html( $localized ); ?></code></td></tr>
-                <tr><th>Spanish State</th><td><code><?php echo esc_html( $state ); ?></code></td></tr>
-                <tr><th>Overlay Decision</th><td><code><?php echo esc_html( $evaluation['state'] ); ?></code></td></tr>
-            </tbody>
-        </table>
-
-        <h3 style="margin-top:24px">自动检查项</h3>
-        <table class="widefat striped" style="max-width:1200px">
-            <thead><tr><th style="width:100px">Result</th><th>Check</th><th>Detail</th></tr></thead>
-            <tbody>
-            <?php foreach ( $checks as $check ) : ?>
-                <tr>
-                    <td><?php echo self::status_badge( $check['status'] ); ?></td>
-                    <td><?php echo esc_html( $check['label'] ); ?></td>
-                    <td><code><?php echo esc_html( $check['detail'] ); ?></code></td>
-                </tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table>
-        <p class="description" style="margin-top:12px">说明：服务器回环请求在 SiteGround / Cloudflare 环境中可能拿不到自定义调试 Header，因此 Header 缺失记为 WARN，不影响核心功能 PASS；浏览器 F12 仍可用于人工核验。</p>
-        <?php
+    private static function render_summary_notice( $label, $summary ) {
+        $class = 'PASS' === $summary ? 'notice-success' : ( 'PASS with WARN' === $summary ? 'notice-warning' : 'notice-error' );
+        echo '<div class="notice ' . esc_attr( $class ) . ' inline" style="margin-top:12px"><p><strong>' . esc_html( $label . ': ' . $summary ) . '</strong></p></div>';
     }
 
     private static function probe_url( $url ) {
@@ -244,6 +296,72 @@ final class WEM_ML_Diagnostics {
         );
     }
 
+    private static function extract_link_hrefs( $html, $rel ) {
+        $matches = array();
+        preg_match_all( '/<link\b[^>]*>/i', (string) $html, $tags );
+
+        foreach ( $tags[0] as $tag ) {
+            if ( ! preg_match( '/\brel=["\']([^"\']+)["\']/i', $tag, $rel_match ) ) {
+                continue;
+            }
+            $rels = preg_split( '/\s+/', strtolower( trim( $rel_match[1] ) ) );
+            if ( ! in_array( strtolower( $rel ), $rels, true ) ) {
+                continue;
+            }
+            if ( preg_match( '/\bhref=["\']([^"\']+)["\']/i', $tag, $href_match ) ) {
+                $matches[] = html_entity_decode( $href_match[1], ENT_QUOTES, 'UTF-8' );
+            }
+        }
+
+        return $matches;
+    }
+
+    private static function check_hreflang( $label, $html, $language, $expected_url ) {
+        $found = '';
+        preg_match_all( '/<link\b[^>]*>/i', (string) $html, $tags );
+
+        foreach ( $tags[0] as $tag ) {
+            if ( ! preg_match( '/\brel=["\']alternate["\']/i', $tag ) ) {
+                continue;
+            }
+            if ( ! preg_match( '/\bhreflang=["\']([^"\']+)["\']/i', $tag, $lang_match ) ) {
+                continue;
+            }
+            if ( strtolower( $lang_match[1] ) !== strtolower( $language ) ) {
+                continue;
+            }
+            if ( preg_match( '/\bhref=["\']([^"\']+)["\']/i', $tag, $href_match ) ) {
+                $found = html_entity_decode( $href_match[1], ENT_QUOTES, 'UTF-8' );
+                break;
+            }
+        }
+
+        return self::check( $label, '' !== $expected_url && self::same_url( $found, $expected_url ), $found ? $found : 'missing' );
+    }
+
+    private static function extract_html_lang( $html ) {
+        if ( preg_match( '/<html\b[^>]*\blang=["\']([^"\']+)["\']/i', (string) $html, $match ) ) {
+            return trim( $match[1] );
+        }
+        return '';
+    }
+
+    private static function url_list_check( $label, $urls, $expected ) {
+        $matched = false;
+        foreach ( $urls as $url ) {
+            if ( self::same_url( $url, $expected ) ) {
+                $matched = true;
+                break;
+            }
+        }
+
+        return self::check( $label, '' !== $expected && $matched, empty( $urls ) ? 'missing' : implode( ' | ', $urls ) );
+    }
+
+    private static function same_url( $left, $right ) {
+        return untrailingslashit( (string) $left ) === untrailingslashit( (string) $right );
+    }
+
     private static function header_value( $headers, $name ) {
         if ( is_object( $headers ) && method_exists( $headers, 'offsetGet' ) ) {
             $value = $headers->offsetGet( $name );
@@ -263,11 +381,7 @@ final class WEM_ML_Diagnostics {
 
     private static function header_check( $label, $actual, $expected ) {
         if ( '' === (string) $actual ) {
-            return array(
-                'label'  => (string) $label,
-                'status' => 'warn',
-                'detail' => 'missing in loopback response; browser F12 may still expose it',
-            );
+            return self::warning( $label, 'missing in loopback response; browser F12 may still expose it' );
         }
 
         return self::check( $label, (string) $actual === (string) $expected, 'expected ' . $expected . ', actual ' . $actual );
@@ -277,6 +391,14 @@ final class WEM_ML_Diagnostics {
         return array(
             'label'  => (string) $label,
             'status' => $passed ? 'pass' : 'fail',
+            'detail' => (string) $detail,
+        );
+    }
+
+    private static function warning( $label, $detail ) {
+        return array(
+            'label'  => (string) $label,
+            'status' => 'warn',
             'detail' => (string) $detail,
         );
     }
