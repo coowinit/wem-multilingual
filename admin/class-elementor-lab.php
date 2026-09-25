@@ -45,10 +45,10 @@ final class WEM_ML_Elementor_Lab {
                 <input type="hidden" name="page" value="wem-multilingual-elementor-lab">
                 <table class="form-table" role="presentation">
                     <tr>
-                        <th scope="row"><label for="wem-ml-elementor-object-id">Page / Post ID</label></th>
+                        <th scope="row"><label for="wem-ml-elementor-object-id">Content Object ID</label></th>
                         <td>
                             <input id="wem-ml-elementor-object-id" name="object_id" type="number" min="1" required class="small-text" value="<?php echo $object_id ? esc_attr( (string) $object_id ) : ''; ?>">
-                            <p class="description">建议先使用当前已验证的 Elementor 页面，例如 Page #44。</p>
+                            <p class="description">可测试 Page、Post 或由 Elementor 编辑的 Custom Post Type，例如产品详情页。</p>
                         </td>
                     </tr>
                 </table>
@@ -59,8 +59,8 @@ final class WEM_ML_Elementor_Lab {
                 <hr>
                 <h2>2. Environment Probe</h2>
                 <?php
-                if ( ! $post || ! in_array( $post->post_type, array( 'page', 'post' ), true ) ) {
-                    echo '<div class="notice notice-error inline"><p>没有找到可测试的 Page / Post。</p></div>';
+                if ( ! $post || 'revision' === $post->post_type ) {
+                    echo '<div class="notice notice-error inline"><p>没有找到可测试的 WordPress Content Object。</p></div>';
                 } else {
                     self::render_probe( $post );
                 }
@@ -127,6 +127,7 @@ final class WEM_ML_Elementor_Lab {
             <tbody>
                 <tr><th style="width:260px">Object</th><td><code><?php echo esc_html( $post->post_type . ' #' . $object_id ); ?></code></td></tr>
                 <tr><th>Source Title</th><td><?php echo esc_html( $post->post_title ); ?></td></tr>
+                <tr><th>Post Type</th><td><code><?php echo esc_html( $post->post_type ); ?></code></td></tr>
                 <tr><th>Elementor Runtime</th><td><code><?php echo $elementor_active ? 'loaded' : 'not-detected'; ?></code></td></tr>
                 <tr><th>_elementor_edit_mode</th><td><code><?php echo $edit_mode ? esc_html( $edit_mode ) : '—'; ?></code></td></tr>
                 <tr><th>Elementor Page Candidate</th><td><code><?php echo $is_elementor_page ? 'yes' : 'no'; ?></code></td></tr>
