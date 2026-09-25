@@ -27,6 +27,7 @@ require_once WEM_ML_DIR . 'includes/class-router.php';
 
 if ( is_admin() ) {
     require_once WEM_ML_DIR . 'admin/class-admin.php';
+    require_once WEM_ML_DIR . 'admin/class-diagnostics.php';
 }
 
 register_activation_hook( __FILE__, array( 'WEM_ML_Schema', 'install' ) );
@@ -38,4 +39,5 @@ WEM_ML_Router::init();
 
 if ( is_admin() ) {
     WEM_ML_Admin::init();
+    WEM_ML_Diagnostics::init();
 }
