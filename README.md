@@ -1,8 +1,8 @@
 # WEM Multilingual
 
 > 🌍 面向 WordPress B2B 企业官网的 SEO 优先多语言基础插件  
-> **当前阶段：Architecture Baseline → v0.1.0 Experimental Core**  
-> **当前状态：研究与架构已收敛，尚未进入生产可用阶段**
+> **当前阶段：v0.1.0 Experimental Core 已完成验证**  
+> **当前状态：核心架构实验通过，尚未进入生产可用阶段**
 
 ---
 
@@ -10,21 +10,21 @@
 
 **WEM Multilingual** 是一套面向 WordPress 企业官网的轻量多语言架构实验。
 
-它不是为了重新实现一个功能庞大的 WPML，而是围绕我们真实长期维护的 B2B / 外贸企业站，优先解决几个最重要的问题：
+它不是为了重新实现一个功能庞大的 WPML，而是围绕真实长期维护的 B2B / 外贸企业站，优先验证几个最重要的问题：
 
 ```text
 语言 URL 独立
 SEO 结构正确
 默认语言源数据保持干净
 译文保存在本地数据库
-Elementor 页面结构尽量只维护一份
-Translation Provider 不参与访客实时请求
-后续功能可以通过 Adapter 逐步扩展
+语言版本发布状态独立控制
+运行时 Overlay 不污染 Source Object
+后续复杂能力通过 Adapter / Lab 逐步扩展
 ```
 
-当前项目仍处于 **Experimental Core** 阶段。
+`v0.1.0 Experimental Core` 已完成真实 WordPress 环境中的 T01–T10 验收。
 
-> **请不要将当前版本直接用于生产站。**
+> **当前版本仍是实验核心，不建议直接用于生产站。**
 
 ---
 
@@ -35,10 +35,12 @@ WordPress 多语言并不只是“把文字翻译一下”。
 一个真正可长期维护的多语言系统至少涉及：
 
 ```text
-语言上下文
+Language Context
 URL / Routing
 WordPress Object Model
 Translation Storage
+Object Language State
+Structured Overlay
 SEO
 Elementor
 Taxonomy
@@ -62,7 +64,7 @@ Translation Provider
 - LibreTranslate
 - translate.js
 
-随后又进行了两轮独立架构审计，重点挑战：
+随后进行了两轮独立架构审计，重点挑战：
 
 ```text
 Single Source 是否合理？
@@ -73,7 +75,7 @@ URL 是否应该改写 REQUEST_URI？
 HTML DOM Translation 是否值得成为 Core？
 ```
 
-最终才形成当前的 Architecture Baseline。
+最终形成 Architecture Baseline，并在 `v0.1.0 Experimental Core` 中完成实际验证。
 
 ---
 
@@ -83,8 +85,8 @@ HTML DOM Translation 是否值得成为 Core？
 
 - WordPress 企业官网
 - B2B 外贸站
-- Elementor
 - Page / Post
+- Elementor（后续 Adapter）
 - 后续扩展 CPT / Taxonomy
 - 自定义结构化字段
 - SEO Title / Meta Description / Schema / Sitemap
@@ -116,6 +118,10 @@ HTML DOM Translation 是否值得成为 Core？
 
 以及：
 
+> **Context 定身份，Hash 定版本，State 定发布边界。**
+
+再加一条：
+
 > **URL 不走机器翻译，SEO 不做事后补丁；Provider 负责生成译文，Core 负责管理多语言。**
 
 ---
@@ -145,36 +151,27 @@ HTML DOM Translation 是否值得成为 Core？
              │                     │
              ▼                     ▼
      Translation Repository   Object State
-             │
-             ▼
-      Structured Overlay
-             │
-       ┌─────┴────────────┐
-       │                  │
-       ▼                  ▼
- WordPress Native      Adapter Layer
-     Fields                │
-                           ├─ Elementor
-                           ├─ Taxonomy
-                           ├─ Menu
-                           └─ Media
-                            │
-                            ▼
-                         SEO Layer
-                            │
-                            ▼
-                    Localized Response
+             │                     │
+             └──────────┬──────────┘
+                        ▼
+                 Runtime Overlay
+                        │
+                        ▼
+                     SEO Core
+                        │
+                        ▼
+                Localized Response
 ```
 
 ---
 
-# 5. 当前已经确定的核心原则
+# 5. 当前已经验证的核心原则
 
 ## 5.1 Source Data Must Stay Clean
 
 默认语言 Source Data 不被多语言插件污染。
 
-不把译文或语言标记直接写入：
+不把译文直接写入：
 
 ```text
 post_title
@@ -182,7 +179,13 @@ post_content
 Elementor _elementor_data
 ```
 
-停用插件后，默认语言站仍应保持正常。
+在 v0.1.0 中已实际验证：
+
+```text
+Spanish 标题通过 Runtime Overlay 显示
+wp_posts.post_title 仍保持 English
+停用插件后 English Source 页面继续正常
+```
 
 ---
 
@@ -190,20 +193,100 @@ Elementor _elementor_data
 
 译文保存在 WordPress 本地数据库。
 
-访客请求阶段：
+当前核心表：
 
 ```text
-不调用 OpenAI
-不调用 DeepL
-不调用 Gemini
-不调用 LibreTranslate
+wp_wem_ml_strings
+wp_wem_ml_translations
+wp_wem_ml_object_state
+wp_wem_ml_object_slugs
 ```
 
-Translation Provider 只用于后台生产译文。
+访客请求阶段不调用 Translation Provider。
+
+```text
+OpenAI
+DeepL
+Gemini
+LibreTranslate
+```
+
+等 Provider 以后只负责后台生产译文，不参与前台实时请求。
 
 ---
 
-## 5.3 SEO First
+## 5.3 Context = Identity / Hash = Version
+
+Source Unit 使用稳定 Context 表示“是谁”：
+
+```text
+post:44:title
+```
+
+Source 内容变化后，不创建新的 Translation Unit，只更新：
+
+```text
+source_text
+source_hash
+normalized_hash
+```
+
+当：
+
+```text
+source_hash
+!=
+translated_from_hash
+```
+
+即可判断：
+
+```text
+Stale
+```
+
+v0.1.0 已验证：
+
+```text
+Current
+→ Source 修改
+→ source-drift / Stale
+→ 更新译文
+→ Current
+```
+
+---
+
+## 5.4 State = Publication Boundary
+
+“有译文”不等于“已公开”。
+
+当前对象语言状态：
+
+```text
+draft
+published
+```
+
+验证结果：
+
+```text
+draft
+→ Spanish URL = 404
+→ 不进入 hreflang
+→ 不输出 Spanish canonical
+→ 不应用 Title Overlay
+
+published
+→ Spanish URL = 200
+→ Route resolved
+→ Title Overlay applied
+→ SEO Signals 正常输出
+```
+
+---
+
+## 5.5 SEO First
 
 语言 URL 是 Core，而不是附加功能。
 
@@ -211,25 +294,27 @@ Translation Provider 只用于后台生产译文。
 
 ```text
 English
-/about-us/
+/about-evodek/
 
 Spanish
-/es/sobre-nosotros/
+/es/acerca-de-evodek/
 ```
 
-Published 语言版本需要正确管理：
+Published 语言版本已经验证：
 
 ```text
 self canonical
-hreflang
-x-default
+hreflang=en
+hreflang=es
+hreflang=x-default
 html lang
-sitemap（后续）
 ```
+
+Draft 语言版本则不会作为正式 SEO 页面暴露。
 
 ---
 
-## 5.4 Page / Post：Single Source + Structured Overlay
+## 5.6 Page / Post：Single Source + Structured Overlay
 
 当前核心模型：
 
@@ -247,13 +332,13 @@ ES Post
 DE Post
 ```
 
-主要目的：
+目的：
 
-> 避免企业站中 Elementor 页面结构被复制成多份，并在长期修改中逐渐漂移。
+> 避免企业站中页面结构被复制成多份，并在长期修改中逐渐漂移。
 
 ---
 
-## 5.5 Hybrid Object Model
+## 5.7 Hybrid Object Model
 
 **Single Source 不是适用于所有 WordPress Object 的统一规则。**
 
@@ -317,16 +402,20 @@ $_SERVER['REQUEST_URI']
 
 实现多语言路由。
 
-当前方向：
+当前实现：
 
 ```text
 WordPress Native Rewrite
 +
-Query Vars
+Custom Query Vars
 +
 Object Slug Overlay
 +
-Permalink Filters
+Incoming Object Resolution
++
+Outgoing Permalink Filters
++
+Object Language State Gate
 ```
 
 业务真相：
@@ -342,24 +431,18 @@ translated_slug
 例如：
 
 ```text
-Page #125
+Page #44
 language = es
-slug = sobre-nosotros
+slug = acerca-de-evodek
 ```
 
-完整 URL：
+完整 Public URL：
 
 ```text
-/es/sobre-nosotros/
+/es/acerca-de-evodek/
 ```
 
-属于：
-
-```text
-Derived Data
-```
-
-后期可以建立可重建的 Route Index，但不把完整 Path 当作不可替代的数据真相。
+属于 Derived Data，而不是长期唯一数据真相。
 
 详细见：
 
@@ -368,9 +451,9 @@ Derived Data
 
 ---
 
-# 8. Translation Repository 的核心思想
+# 8. Translation Repository
 
-当前模型：
+核心关系：
 
 ```text
 Source Unit
@@ -383,49 +466,22 @@ Translation
     └─ fr
 ```
 
-最重要的一句话：
-
-> **Context 定身份，Hash 定版本。**
-
-例如：
+v0.1.0 当前只验证：
 
 ```text
-context_key
-post:125:title
+post_title
+English → Spanish
 ```
 
-Source：
+并已跑通：
 
 ```text
-Composite Decking
-```
-
-后来改成：
-
-```text
-Premium Composite Decking
-```
-
-Translation Unit 仍然是同一个。
-
-变化的是：
-
-```text
-source_hash
-```
-
-如果：
-
-```text
-source_hash
-!=
-translated_from_hash
-```
-
-即可推导：
-
-```text
-Source Changed / Stale
+同步 Source Unit
+保存 Spanish Translation
+Hash 比较
+Stale Detection
+重新翻译
+恢复 Current
 ```
 
 详细见：
@@ -435,18 +491,142 @@ Source Changed / Stale
 
 ---
 
-# 9. Elementor 当前策略
+# 9. Diagnostics / Validation Lab
+
+v0.1.0 开发过程中保留了后台 Diagnostics，用作长期教学、诊断和回归测试工具。
+
+当前可以自动验证：
+
+```text
+Routing
+Object State
+Translated Slug
+Localized Permalink
+Title Overlay
+Source / Translation Hash
+HTTP 200 / 404
+Debug Headers
+Canonical
+hreflang
+html lang
+Draft SEO Safety
+Published SEO Signals
+```
+
+Diagnostics 会根据当前 State 自动切换验收模式：
+
+```text
+DRAFT
+PUBLISHED
+```
+
+并输出：
+
+```text
+PASS
+WARN
+FAIL
+```
+
+这套 Lab 后续版本继续保留，不作为临时代码删除。
+
+---
+
+# 10. v0.1.0 Final Validation
+
+`v0.1.0 Experimental Core` 已完成 T01–T10 验收：
+
+| Test | 内容 | 结果 |
+|---|---|---|
+| T01 | Default Language | ✅ PASS |
+| T02 | Spanish / Native Routing | ✅ PASS |
+| T03 | Translated Slug + Title Overlay | ✅ PASS |
+| T04 | Source Clean | ✅ PASS |
+| T05 | Stale Detection | ✅ PASS |
+| T06 | SEO Signals | ✅ PASS |
+| T07 | Draft Language Safety | ✅ PASS |
+| T08 | Published Language | ✅ PASS |
+| T09 | Disable Safety | ✅ PASS |
+| T10 | Basic Cache Isolation | ✅ PASS |
+
+详细测试证据与开发过程中发现的问题见：
+
+- [v0.1.0 Experimental Core 开发规划](docs/07-v0.1.0-plan.md)
+- [v0.1.0 Final Validation](docs/08-v0.1.0-validation.md)
+
+---
+
+# 11. 本轮验证中解决过的重要问题
+
+v0.1.0 的价值不只是“最终 PASS”，还包括开发过程中暴露并修正的问题：
+
+```text
+WordPress canonical redirect 抢占 Spanish URL
+Draft Route Gate 只标记状态但没有真正 404
+后台 Diagnostics 注册时机过早导致 Fatal Error
+Source Unit 与真实 Source Title 漂移
+SiteGround / Cloudflare 回环请求缓存干扰
+插件停用后 Rewrite Rule 残留
+静态 <html lang="en"> 无法响应语言上下文
+```
+
+这些问题都已经进入实际测试闭环，而不是停留在理论设计。
+
+---
+
+# 12. 当前已知边界
+
+虽然 v0.1.0 核心实验通过，但仍然明确不包含：
+
+```text
+post_content
+Elementor
+Taxonomy
+Menu
+Media
+AI Provider
+Translation Memory
+Glossary
+HTML Parser
+DOM Parser
+the_content Translation
+CPT Base Translation
+Occurrence
+Search
+REST Multilingual
+AJAX
+WooCommerce
+Multisite
+Different Domains
+```
+
+另外，Basic Cache Isolation 当前验证的是：
+
+```text
+English / Spanish 不串语言
+SiteGround / Cloudflare 正常请求链稳定
+```
+
+测试环境中的：
+
+```text
+CF-Cache-Status = DYNAMIC
+```
+
+因此尚未证明 Cloudflare HTML `HIT` 场景下的边缘缓存行为。
+
+---
+
+# 13. Elementor 当前策略
 
 Elementor **不进入 v0.1.0 Core**。
 
-计划在：
+下一阶段：
 
 ```text
 v0.1.1
 Elementor Structured Translation Lab
 ```
-
-单独验证。
 
 当前原则：
 
@@ -466,7 +646,20 @@ Widget-scoped Runtime Overlay
 把 the_content 字符串替换作为 Core
 ```
 
-具体 Runtime Hook、Widget Identity、迁移策略仍需要通过实验确定。
+第一批实验建议：
+
+```text
+Heading
+Button
+```
+
+再考虑：
+
+```text
+Text Editor
+Image
+Icon List
+```
 
 详细见：
 
@@ -475,7 +668,7 @@ Widget-scoped Runtime Overlay
 
 ---
 
-# 10. Taxonomy 为什么暂缓
+# 14. Taxonomy 为什么仍然暂缓
 
 第一轮和第二轮审计都证明：
 
@@ -485,13 +678,9 @@ Single-Source Post
 Multi-Term Taxonomy
 ```
 
-并不是一句：
+不是一句“用 Multi-Term 就解决了”这么简单。
 
-> “用 Multi-Term 就解决了。”
-
-这么简单。
-
-仍然需要真正验证：
+仍需要真正验证：
 
 ```text
 wp_term_relationships
@@ -517,94 +706,23 @@ Elementor Taxonomy Widget
 
 ---
 
-# 11. v0.1.0 Experimental Core
-
-v0.1.0 不是产品版。
-
-它只回答：
-
-> **Single Source Multilingual Core 能不能成立？**
-
-## IN SCOPE
-
-```text
-English + Spanish
-
-Language Context
-/es/ Prefix
-
-Native Rewrite Rule
-Custom Query Vars
-
-Object Slug Overlay
-Incoming Object Resolution
-Outgoing Permalink Filter
-
-Translation Repository
-Source Hash
-translated_from_hash
-Stale Detection
-
-Object Language State
-
-post_title Structured Translation
-
-self canonical
-hreflang
-x-default
-html lang
-
-Disable Safety
-Basic Cache Isolation
-```
-
-## OUT OF SCOPE
-
-```text
-post_content
-Elementor
-Taxonomy
-Menu
-Media
-AI Provider
-Translation Memory
-Glossary
-HTML Parser
-DOM Parser
-the_content Translation
-CPT Base Translation
-Occurrence
-Search
-REST Multilingual
-AJAX
-WooCommerce
-Multisite
-Different Domains
-```
-
-详细见：
-
-- [v0.1.0 Experimental Core 开发规划](docs/07-v0.1.0-plan.md)
-
----
-
-# 12. 版本路线
+# 15. 版本路线
 
 ```text
 Architecture Baseline
         │
         ▼
-v0.1.0
-Experimental Core
-│
-├── Language Context
-├── Native Rewrite
-├── Object Slug Overlay
-├── Translation Repository
-├── Object Language State
-├── post_title Overlay
-├── SEO Core
-└── Disable Safety
+v0.1.0 Experimental Core
+        │
+        ├─ Language Context             ✅
+        ├─ Native Rewrite               ✅
+        ├─ Object Slug Overlay          ✅
+        ├─ Translation Repository       ✅
+        ├─ Object Language State        ✅
+        ├─ post_title Overlay           ✅
+        ├─ SEO Core                     ✅
+        ├─ Disable Safety               ✅
+        └─ Basic Cache Isolation        ✅
         │
         ▼
 v0.1.1
@@ -620,13 +738,11 @@ Menu / Media / Provider / TM / Search
 
 ---
 
-# 13. 推荐阅读顺序
+# 16. 推荐阅读顺序
 
 如果以后重新回顾这个项目，建议不要直接从代码开始看。
 
-按照下面顺序阅读：
-
-### 第一步：先理解为什么这样设计
+### 第一步：理解为什么这样设计
 
 1. [架构总览](docs/01-architecture-overview.md)
 2. [核心设计原则](docs/02-core-principles.md)
@@ -641,9 +757,10 @@ Menu / Media / Provider / TM / Search
 5. [Elementor 策略](docs/05-elementor-strategy.md)
 6. [Taxonomy：暂缓与风险](docs/06-taxonomy-deferred.md)
 
-### 第四步：准备开发
+### 第四步：看 v0.1.0 实际怎么落地
 
 7. [v0.1.0 Experimental Core 开发规划](docs/07-v0.1.0-plan.md)
+8. [v0.1.0 Final Validation](docs/08-v0.1.0-validation.md)
 
 ### 第五步：遇到架构疑问时查 ADR
 
@@ -655,27 +772,19 @@ Menu / Media / Provider / TM / Search
 
 ---
 
-# 14. ADR 的使用规则
+# 17. ADR 的使用规则
 
 后续如果出现这种问题：
 
 ```text
 为什么不改 REQUEST_URI？
-
 为什么 Elementor 不直接保存目标语言 JSON？
-
 为什么 Taxonomy 不进 v0.1.0？
-
 为什么 Route 不保存完整 Path？
-
 为什么 AI Provider 不参与前台请求？
 ```
 
-优先：
-
-```text
-查看现有 ADR
-```
+优先查看现有 ADR。
 
 如果新的实验结果证明旧决策不再成立：
 
@@ -697,9 +806,9 @@ Menu / Media / Provider / TM / Search
 
 ---
 
-# 15. 后续代码也必须遵守文档边界
+# 18. 后续代码必须继续遵守边界
 
-未来新增源码后，任何功能先判断：
+任何新增能力先判断：
 
 ```text
 它属于 Core？
@@ -709,8 +818,6 @@ Menu / Media / Provider / TM / Search
 
 ### Core
 
-只有：
-
 ```text
 Language
 Routing
@@ -719,11 +826,7 @@ Object State
 SEO
 ```
 
-这一类所有站点都需要的底层能力。
-
 ### Adapter
-
-例如：
 
 ```text
 Elementor
@@ -734,8 +837,6 @@ Media
 ```
 
 ### Lab
-
-尚未证明的复杂能力：
 
 ```text
 Taxonomy
@@ -750,12 +851,15 @@ Search
 
 ---
 
-# 16. 仓库结构
+# 19. 当前仓库结构
 
 ```text
 wem-multilingual/
+├── wem-multilingual.php
 ├── README.md
 ├── STRUCTURE.md
+├── includes/
+├── admin/
 └── docs/
     ├── 01-architecture-overview.md
     ├── 02-core-principles.md
@@ -764,6 +868,7 @@ wem-multilingual/
     ├── 05-elementor-strategy.md
     ├── 06-taxonomy-deferred.md
     ├── 07-v0.1.0-plan.md
+    ├── 08-v0.1.0-validation.md
     └── adr/
         ├── ADR-001-core-object-model.md
         ├── ADR-002-routing-model.md
@@ -772,18 +877,9 @@ wem-multilingual/
         └── ADR-005-taxonomy-deferred.md
 ```
 
-后续进入代码阶段后，再逐步增加：
-
-```text
-wem-multilingual.php
-includes/
-admin/
-tests/
-```
-
 ---
 
-# 17. 当前项目状态
+# 20. 当前项目状态
 
 ```text
 Research
@@ -802,10 +898,10 @@ v0.1.0 Development Plan
    ✅
 
 v0.1.0 Implementation
-   ⏳
+   ✅
 
 v0.1.0 Validation
-   ⏳
+   ✅
 
 v0.1.1 Elementor Lab
    ⏳
@@ -813,13 +909,13 @@ v0.1.1 Elementor Lab
 
 ---
 
-# 18. 当前仓库的真正价值
+# 21. 当前仓库的真正价值
 
-这个仓库不仅是未来插件的 README。
+这个仓库不仅保存插件源码。
 
 更重要的是保存：
 
-> **我们为什么这样设计。**
+> **我们为什么这样设计，以及这些判断是否真的被实验验证过。**
 
 半年以后回来看代码，真正有价值的不只是：
 
@@ -833,18 +929,40 @@ v0.1.1 Elementor Lab
 为什么这里选择 Single Source？
 为什么 URL 使用 Slug Overlay？
 为什么不修改 REQUEST_URI？
+为什么 Translation 和 Publication State 要分开？
 为什么 Elementor 被放到 Adapter？
 为什么 Taxonomy 被延后？
+哪些结论已经通过真实网站验证？
 ```
-
-这套文档就是 WEM Multilingual 后续所有开发、重构和新增功能的架构参考基线。
 
 ---
 
 ## 当前结论
 
-> **Architecture Core Ready — 可以进入 v0.1.0 Experimental Core 实现阶段。**
+> **v0.1.0 Experimental Core Validation Complete。**
 
-但所有新增功能仍应坚持：
+在当前实验边界内，已经证明：
+
+```text
+Single Source
++
+Local Translation Repository
++
+Native Routing
++
+Translated Slug
++
+Object Language State
++
+Runtime Overlay
++
+SEO Core
+```
+
+这条核心链路可以成立。
+
+但它仍然只是下一阶段开发的架构基线，不等于生产版完成。
+
+后续继续坚持：
 
 > **先验证地基，再扩展能力；先记录决策，再修改架构。**
