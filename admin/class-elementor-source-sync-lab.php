@@ -38,9 +38,15 @@ final class WEM_ML_Elementor_Source_Sync_Lab {
         $result    = WEM_ML_Elementor_Source_Discovery::discover( $object_id );
         $synced    = 0;
         $failed    = 0;
+        $changed   = 0;
 
         if ( ! is_wp_error( $result ) ) {
             foreach ( $result['fields'] as $field ) {
+                $existing = WEM_ML_Source_Unit_Repository::get_by_context( $field['context_key'] );
+                $will_change = ! $existing
+                    || 'active' !== (string) $existing->state
+                    || ! hash_equals( (string) $existing->source_hash, (string) $field['source_hash'] );
+
                 $row = WEM_ML_Source_Unit_Repository::sync(
                     array(
                         'source_language' => 'en',
@@ -58,6 +64,9 @@ final class WEM_ML_Elementor_Source_Sync_Lab {
                     $failed++;
                 } else {
                     $synced++;
+                    if ( $will_change ) {
+                        $changed++;
+                    }
                 }
             }
         }
@@ -74,9 +83,27 @@ final class WEM_ML_Elementor_Source_Sync_Lab {
             $args['sync_status'] = 'partial';
             $args['synced']      = $synced;
             $args['failed']      = $failed;
+            $args['changed']     = $changed;
         } else {
             $args['sync_status'] = 'success';
             $args['synced']      = $synced;
+            $args['changed']     = $changed;
+        }
+
+        if ( ! is_wp_error( $result ) && $changed > 0 ) {
+            $cache_result = WEM_ML_Cache_Invalidator::purge_object( $object_id );
+
+            if ( is_wp_error( $cache_result ) ) {
+                $args['cache_status'] = 'error';
+                $args['cache_message'] = rawurlencode( $cache_result->get_error_message() );
+            } else {
+                $args['cache_status']   = 'purged';
+                $args['cache_provider'] = sanitize_key( $cache_result['provider'] );
+                $args['cache_method']   = sanitize_key( $cache_result['method'] );
+                $args['cache_count']    = count( $cache_result['purged'] );
+            }
+        } elseif ( ! is_wp_error( $result ) ) {
+            $args['cache_status'] = 'unchanged';
         }
 
         wp_safe_redirect( add_query_arg( $args, admin_url( 'tools.php' ) ) );
@@ -130,7 +157,7 @@ final class WEM_ML_Elementor_Source_Sync_Lab {
 
                     <?php if ( ! empty( $result['fields'] ) ) : ?>
                         <h2 style="margin-top:24px">3. Explicit Source Unit Sync</h2>
-                        <p>点击后只写入 WEM 自有表 <code>wp_wem_ml_strings</code>。相同 Context 再次同步会更新原 Source Unit，不会重复新增。</p>
+                        <p>点击后只写入 WEM 自有表 <code>wp_wem_ml_strings</code>。相同 Context 再次同步会更新原 Source Unit，不会重复新增；只有 Source Unit 真正新增或版本变化时才自动清理当前对象 EN / ES 缓存。</p>
                         <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
                             <input type="hidden" name="action" value="wem_ml_sync_elementor_sources">
                             <input type="hidden" name="object_id" value="<?php echo esc_attr( (string) $object_id ); ?>">
@@ -151,15 +178,31 @@ final class WEM_ML_Elementor_Source_Sync_Lab {
         $status = isset( $_GET['sync_status'] ) ? sanitize_key( $_GET['sync_status'] ) : '';
 
         if ( 'success' === $status ) {
-            $synced = isset( $_GET['synced'] ) ? absint( $_GET['synced'] ) : 0;
-            echo '<div class="notice notice-success inline"><p>Source Unit Sync 完成：' . esc_html( (string) $synced ) . ' 条。</p></div>';
+            $synced  = isset( $_GET['synced'] ) ? absint( $_GET['synced'] ) : 0;
+            $changed = isset( $_GET['changed'] ) ? absint( $_GET['changed'] ) : 0;
+            echo '<div class="notice notice-success inline"><p>Source Unit Sync 完成：' . esc_html( (string) $synced ) . ' 条；实际变化 ' . esc_html( (string) $changed ) . ' 条。</p></div>';
         } elseif ( 'partial' === $status ) {
-            $synced = isset( $_GET['synced'] ) ? absint( $_GET['synced'] ) : 0;
-            $failed = isset( $_GET['failed'] ) ? absint( $_GET['failed'] ) : 0;
-            echo '<div class="notice notice-warning inline"><p>部分同步完成：成功 ' . esc_html( (string) $synced ) . '，失败 ' . esc_html( (string) $failed ) . '。</p></div>';
+            $synced  = isset( $_GET['synced'] ) ? absint( $_GET['synced'] ) : 0;
+            $failed  = isset( $_GET['failed'] ) ? absint( $_GET['failed'] ) : 0;
+            $changed = isset( $_GET['changed'] ) ? absint( $_GET['changed'] ) : 0;
+            echo '<div class="notice notice-warning inline"><p>部分同步完成：成功 ' . esc_html( (string) $synced ) . '，失败 ' . esc_html( (string) $failed ) . '，实际变化 ' . esc_html( (string) $changed ) . '。</p></div>';
         } elseif ( 'error' === $status ) {
             $message = isset( $_GET['message'] ) ? sanitize_text_field( wp_unslash( $_GET['message'] ) ) : '同步失败。';
             echo '<div class="notice notice-error inline"><p>' . esc_html( $message ) . '</p></div>';
+        }
+
+        $cache_status = isset( $_GET['cache_status'] ) ? sanitize_key( $_GET['cache_status'] ) : '';
+
+        if ( 'purged' === $cache_status ) {
+            $provider = isset( $_GET['cache_provider'] ) ? sanitize_key( $_GET['cache_provider'] ) : '';
+            $method   = isset( $_GET['cache_method'] ) ? sanitize_key( $_GET['cache_method'] ) : '';
+            $count    = isset( $_GET['cache_count'] ) ? absint( $_GET['cache_count'] ) : 0;
+            echo '<div class="notice notice-success inline"><p>Source 变化后已自动执行 targeted cache purge：' . esc_html( (string) $count ) . ' 个 URL；Provider=' . esc_html( $provider ) . '；Method=' . esc_html( $method ) . '。</p></div>';
+        } elseif ( 'unchanged' === $cache_status && $status ) {
+            echo '<div class="notice notice-info inline"><p>Source Unit 与当前 Repository 一致，本次未触发缓存清理。</p></div>';
+        } elseif ( 'error' === $cache_status ) {
+            $message = isset( $_GET['cache_message'] ) ? sanitize_text_field( rawurldecode( (string) $_GET['cache_message'] ) ) : '缓存清理失败。';
+            echo '<div class="notice notice-warning inline"><p>Source 已同步，但自动 targeted cache purge 失败：' . esc_html( $message ) . '</p></div>';
         }
     }
 
