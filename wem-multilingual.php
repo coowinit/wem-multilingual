@@ -29,6 +29,7 @@ require_once WEM_ML_DIR . 'includes/class-title-overlay.php';
 require_once WEM_ML_DIR . 'includes/class-seo.php';
 require_once WEM_ML_DIR . 'includes/elementor/class-elementor-adapter-registry.php';
 require_once WEM_ML_DIR . 'includes/elementor/class-elementor-source-discovery.php';
+require_once WEM_ML_DIR . 'includes/elementor/class-elementor-runtime-overlay.php';
 
 if ( is_admin() ) {
     require_once WEM_ML_DIR . 'admin/class-admin.php';
@@ -45,6 +46,7 @@ register_deactivation_hook( __FILE__, array( 'WEM_ML_Router', 'deactivate' ) );
 WEM_ML_Language_Context::init();
 WEM_ML_Router::init();
 WEM_ML_Title_Overlay::init();
+WEM_ML_Elementor_Runtime_Overlay::init();
 WEM_ML_SEO::init();
 
 if ( is_admin() ) {
