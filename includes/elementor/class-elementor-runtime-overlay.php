@@ -2,11 +2,13 @@
 /**
  * Elementor widget-scoped runtime overlay.
  *
- * v0.1.1 Step 5A:
+ * v0.1.1 Step 5A/5B:
  * - Heading only.
  * - Spanish only.
  * - Current/reviewed translations only.
  * - Runtime mutation of the current Elementor widget instance only.
+ * - WEM-managed Spanish Heading output is treated as dynamic to avoid
+ *   Elementor reusing stale language-dependent element HTML.
  * - Never writes _elementor_data or Elementor documents.
  */
 
@@ -17,7 +19,65 @@ if ( ! defined( 'ABSPATH' ) ) {
 final class WEM_ML_Elementor_Runtime_Overlay {
 
     public static function init() {
+        add_filter( 'elementor/element/is_dynamic_content', array( __CLASS__, 'mark_managed_heading_dynamic' ), 20, 3 );
         add_action( 'elementor/frontend/widget/before_render', array( __CLASS__, 'before_widget_render' ), 20 );
+    }
+
+    /**
+     * Tell Elementor not to reuse static Element Cache HTML for a Heading whose
+     * frontend output is language/repository-state dependent in Spanish.
+     *
+     * This does not disable Elementor caching globally. It only marks a Heading
+     * as dynamic when the current Spanish request can be mapped to an existing
+     * WEM Elementor Source Unit.
+     *
+     * @param bool   $is_dynamic Existing dynamic-content decision.
+     * @param array  $raw_data   Elementor raw element data.
+     * @param object $element    Elementor element instance.
+     * @return bool
+     */
+    public static function mark_managed_heading_dynamic( $is_dynamic, $raw_data, $element ) {
+        if ( $is_dynamic || is_admin() || 'es' !== WEM_ML_Language_Context::get_current_language() ) {
+            return $is_dynamic;
+        }
+
+        if ( self::is_elementor_editor_or_preview() ) {
+            return $is_dynamic;
+        }
+
+        if ( ! is_object( $element ) || ! method_exists( $element, 'get_name' ) || ! method_exists( $element, 'get_id' ) ) {
+            return $is_dynamic;
+        }
+
+        if ( 'heading' !== (string) $element->get_name() ) {
+            return $is_dynamic;
+        }
+
+        $object_id = get_queried_object_id();
+
+        if ( $object_id <= 0 ) {
+            $object_id = get_the_ID();
+        }
+
+        $post = $object_id > 0 ? get_post( $object_id ) : null;
+
+        if ( ! $post || ! in_array( $post->post_type, array( 'page', 'post' ), true ) ) {
+            return $is_dynamic;
+        }
+
+        $context_key = sprintf(
+            'elementor:%d:%s:heading:title',
+            $object_id,
+            (string) $element->get_id()
+        );
+
+        $source = WEM_ML_Source_Unit_Repository::get_by_context( $context_key );
+
+        if ( ! $source || 'elementor_widget_field' !== (string) $source->context_type || 'active' !== (string) $source->state ) {
+            return $is_dynamic;
+        }
+
+        return true;
     }
 
     public static function evaluate_heading( $widget, $object_id, $language = 'es' ) {
