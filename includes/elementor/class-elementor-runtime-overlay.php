@@ -18,24 +18,15 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class WEM_ML_Elementor_Runtime_Overlay {
 
+    /** @var array<int,array<string,mixed>> */
+    private static $validation_trace = array();
+
     public static function init() {
         add_filter( 'elementor/element/is_dynamic_content', array( __CLASS__, 'mark_managed_heading_dynamic' ), 20, 3 );
         add_filter( 'elementor/widget/render_content', array( __CLASS__, 'filter_widget_content' ), 20, 3 );
+        add_action( 'wp_footer', array( __CLASS__, 'print_validation_trace' ), 9999 );
     }
 
-    /**
-     * Tell Elementor not to reuse static Element Cache HTML for a Heading whose
-     * frontend output is language/repository-state dependent in Spanish.
-     *
-     * This does not disable Elementor caching globally. It only marks a Heading
-     * as dynamic when the current Spanish request can be mapped to an existing
-     * WEM Elementor Source Unit.
-     *
-     * @param bool   $is_dynamic Existing dynamic-content decision.
-     * @param array  $raw_data   Elementor raw element data.
-     * @param object $element    Elementor element instance.
-     * @return bool
-     */
     public static function mark_managed_heading_dynamic( $is_dynamic, $raw_data, $element ) {
         if ( $is_dynamic || is_admin() || 'es' !== WEM_ML_Language_Context::get_current_language() ) {
             return $is_dynamic;
@@ -55,34 +46,42 @@ final class WEM_ML_Elementor_Runtime_Overlay {
 
         $object_id = self::get_current_object_id();
         $post      = $object_id > 0 ? get_post( $object_id ) : null;
+        $element_id = (string) $element->get_id();
+        $context_key = sprintf( 'elementor:%d:%s:heading:title', $object_id, $element_id );
 
         if ( ! $post || ! in_array( $post->post_type, array( 'page', 'post' ), true ) ) {
+            self::trace( 'is_dynamic_content', array(
+                'object_id'   => $object_id,
+                'element_id'  => $element_id,
+                'context_key' => $context_key,
+                'result'      => 'invalid-object',
+            ) );
             return $is_dynamic;
         }
-
-        $context_key = sprintf(
-            'elementor:%d:%s:heading:title',
-            $object_id,
-            (string) $element->get_id()
-        );
 
         $source = WEM_ML_Source_Unit_Repository::get_by_context( $context_key );
 
         if ( ! $source || 'elementor_widget_field' !== (string) $source->context_type || 'active' !== (string) $source->state ) {
+            self::trace( 'is_dynamic_content', array(
+                'object_id'   => $object_id,
+                'element_id'  => $element_id,
+                'context_key' => $context_key,
+                'result'      => 'missing-source',
+            ) );
             return $is_dynamic;
         }
+
+        self::trace( 'is_dynamic_content', array(
+            'object_id'      => $object_id,
+            'element_id'     => $element_id,
+            'context_key'    => $context_key,
+            'source_unit_id' => (int) $source->id,
+            'result'         => 'dynamic-true',
+        ) );
 
         return true;
     }
 
-    /**
-     * Evaluate one Heading widget for a safe Spanish runtime overlay.
-     *
-     * @param object $widget    Elementor widget instance.
-     * @param int    $object_id Current WordPress object ID.
-     * @param string $language  Target language.
-     * @return array<string,mixed>
-     */
     public static function evaluate_heading( $widget, $object_id, $language = 'es' ) {
         $result = array(
             'state'                => 'invalid-widget',
@@ -178,19 +177,6 @@ final class WEM_ML_Elementor_Runtime_Overlay {
         return $result;
     }
 
-    /**
-     * Overlay only the current Heading widget's rendered HTML.
-     *
-     * Elementor can route dynamic elements through its shortcode/cache render
-     * path. Filtering the final widget content is more stable than mutating the
-     * widget settings earlier in the render lifecycle, while remaining fully
-     * widget-scoped (not a whole-page DOM/string translator).
-     *
-     * @param string $widget_content Rendered widget HTML.
-     * @param object $widget         Elementor widget instance.
-     * @param array  $args           Elementor render metadata.
-     * @return string
-     */
     public static function filter_widget_content( $widget_content, $widget, $args = array() ) {
         if ( is_admin() || 'es' !== WEM_ML_Language_Context::get_current_language() ) {
             return $widget_content;
@@ -205,7 +191,17 @@ final class WEM_ML_Elementor_Runtime_Overlay {
         }
 
         $object_id  = self::get_current_object_id();
+        $element_id = method_exists( $widget, 'get_id' ) ? (string) $widget->get_id() : '';
         $evaluation = self::evaluate_heading( $widget, $object_id, 'es' );
+
+        self::trace( 'render_content', array(
+            'object_id'      => $object_id,
+            'element_id'     => $element_id,
+            'context_key'    => isset( $evaluation['context_key'] ) ? $evaluation['context_key'] : '',
+            'state'          => isset( $evaluation['state'] ) ? $evaluation['state'] : '',
+            'can_overlay'    => ! empty( $evaluation['can_overlay'] ),
+            'content_length' => strlen( (string) $widget_content ),
+        ) );
 
         if ( empty( $evaluation['can_overlay'] ) ) {
             return $widget_content;
@@ -217,8 +213,6 @@ final class WEM_ML_Elementor_Runtime_Overlay {
             return $widget_content;
         }
 
-        // Heading widget output is a single h1-h6 element with the
-        // elementor-heading-title class. Replace only that element's inner HTML.
         $pattern = '~(<h([1-6])\\b[^>]*\\bclass=(["\\\'])[^"\\\']*\\belementor-heading-title\\b[^"\\\']*\\3[^>]*>)(.*?)(</h\\2>)~is';
 
         $replaced = preg_replace_callback(
@@ -227,17 +221,20 @@ final class WEM_ML_Elementor_Runtime_Overlay {
                 return $matches[1] . esc_html( $translated_text ) . $matches[5];
             },
             (string) $widget_content,
-            1
+            1,
+            $replace_count
         );
+
+        self::trace( 'render_content_replace', array(
+            'object_id'     => $object_id,
+            'element_id'    => $element_id,
+            'replace_count' => (int) $replace_count,
+            'result'        => $replace_count > 0 ? 'replaced' : 'pattern-miss',
+        ) );
 
         return is_string( $replaced ) ? $replaced : $widget_content;
     }
 
-    /**
-     * Return the current queried WordPress object ID.
-     *
-     * @return int
-     */
     private static function get_current_object_id() {
         $object_id = get_queried_object_id();
 
@@ -248,11 +245,6 @@ final class WEM_ML_Elementor_Runtime_Overlay {
         return absint( $object_id );
     }
 
-    /**
-     * Keep Elementor editor/preview source-facing and free from runtime overlays.
-     *
-     * @return bool
-     */
     private static function is_elementor_editor_or_preview() {
         if ( ! class_exists( '\\Elementor\\Plugin' ) ) {
             return false;
@@ -269,5 +261,37 @@ final class WEM_ML_Elementor_Runtime_Overlay {
         }
 
         return false;
+    }
+
+    private static function is_validation_request() {
+        return isset( $_GET['wem_ml_validation'] ) && '' !== sanitize_text_field( wp_unslash( (string) $_GET['wem_ml_validation'] ) );
+    }
+
+    private static function trace( $hook, $data = array() ) {
+        if ( ! self::is_validation_request() ) {
+            return;
+        }
+
+        self::$validation_trace[] = array_merge(
+            array(
+                'hook'     => (string) $hook,
+                'language' => WEM_ML_Language_Context::get_current_language(),
+            ),
+            is_array( $data ) ? $data : array()
+        );
+    }
+
+    public static function print_validation_trace() {
+        if ( ! self::is_validation_request() ) {
+            return;
+        }
+
+        $payload = wp_json_encode( self::$validation_trace, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
+
+        if ( ! is_string( $payload ) ) {
+            $payload = '[]';
+        }
+
+        echo "\n<!-- WEM_ML_RUNTIME_TRACE " . esc_html( $payload ) . " -->\n";
     }
 }
