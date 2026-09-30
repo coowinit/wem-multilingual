@@ -27,6 +27,7 @@ require_once WEM_ML_DIR . 'includes/class-object-state.php';
 require_once WEM_ML_DIR . 'includes/class-router.php';
 require_once WEM_ML_DIR . 'includes/class-title-overlay.php';
 require_once WEM_ML_DIR . 'includes/class-seo.php';
+require_once WEM_ML_DIR . 'includes/class-cache-invalidator.php';
 require_once WEM_ML_DIR . 'includes/elementor/class-elementor-adapter-registry.php';
 require_once WEM_ML_DIR . 'includes/elementor/class-elementor-source-discovery.php';
 require_once WEM_ML_DIR . 'includes/elementor/class-elementor-runtime-overlay.php';
