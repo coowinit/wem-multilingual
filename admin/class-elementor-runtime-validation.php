@@ -2,9 +2,11 @@
 /**
  * Read-only Elementor Runtime Validation Lab.
  *
- * v0.1.1 Step 5B diagnostics:
+ * v0.1.1 Step 5 Runtime Validation v2:
  * - No writes, no cache purge, no translation/state mutation.
  * - Compares repository/runtime decision with actual EN/ES frontend output.
+ * - Performs normal + cache-bypass Spanish requests.
+ * - Reports WEM language header and common cache headers.
  * - Heading only for the current experiment scope.
  */
 
@@ -42,8 +44,8 @@ final class WEM_ML_Elementor_Runtime_Validation {
         ?>
         <div class="wrap">
             <h1>WEM ML Elementor Runtime Validation</h1>
-            <p><strong>v0.1.1 · Step 5 Runtime Validation</strong></p>
-            <p>一键只读检查 Routing / State / Source Unit / Translation / Runtime Decision，并请求 EN / ES 前台页面核对实际 Heading 输出。不会清缓存，也不会修改任何数据。</p>
+            <p><strong>v0.1.1 · Step 5 Runtime Validation v2</strong></p>
+            <p>一键只读检查 Routing / State / Source Unit / Translation / Runtime Decision，并对 Spanish 页面执行 Normal / Cache-bypass 双请求。不会清缓存，也不会修改任何数据。</p>
 
             <form method="get" action="<?php echo esc_url( admin_url( 'tools.php' ) ); ?>">
                 <input type="hidden" name="page" value="wem-multilingual-elementor-runtime-validation">
@@ -104,14 +106,13 @@ final class WEM_ML_Elementor_Runtime_Validation {
         $state       = WEM_ML_Object_State::get_status( $post->post_type, $object_id, 'es' );
         $source_url  = WEM_ML_Router::get_source_permalink( $object_id );
         $spanish_url = $slug ? home_url( user_trailingslashit( 'es/' . $slug ) ) : '';
+        $bypass_url  = $spanish_url
+            ? add_query_arg( 'wem_ml_validation', (string) wp_rand( 100000, 999999 ), $spanish_url )
+            : '';
 
-        $en_fetch = self::fetch_frontend( $source_url );
-        $es_fetch = $spanish_url ? self::fetch_frontend( $spanish_url ) : array(
-            'ok' => false,
-            'code' => 0,
-            'body' => '',
-            'error' => 'Missing Spanish slug.',
-        );
+        $en_fetch = self::fetch_frontend( $source_url, false );
+        $es_fetch = $spanish_url ? self::fetch_frontend( $spanish_url, false ) : self::empty_fetch( 'Missing Spanish slug.' );
+        $es_bypass_fetch = $bypass_url ? self::fetch_frontend( $bypass_url, true ) : self::empty_fetch( 'Missing Spanish slug.' );
 
         $rows = array();
 
@@ -137,39 +138,42 @@ final class WEM_ML_Elementor_Runtime_Validation {
                 }
             }
 
-            $actual_en = $en_fetch['ok'] ? self::extract_heading( $en_fetch['body'], $field['element_id'] ) : '';
-            $actual_es = $es_fetch['ok'] ? self::extract_heading( $es_fetch['body'], $field['element_id'] ) : '';
+            $actual_en        = $en_fetch['ok'] ? self::extract_heading( $en_fetch['body'], $field['element_id'] ) : '';
+            $actual_es        = $es_fetch['ok'] ? self::extract_heading( $es_fetch['body'], $field['element_id'] ) : '';
+            $actual_es_bypass = $es_bypass_fetch['ok'] ? self::extract_heading( $es_bypass_fetch['body'], $field['element_id'] ) : '';
 
-            $en_match = '' !== $actual_en && self::same_text( $actual_en, (string) $field['source_text'] );
-            $es_match = '' !== $actual_es && self::same_text( $actual_es, $expected_es );
+            $en_match        = '' !== $actual_en && self::same_text( $actual_en, (string) $field['source_text'] );
+            $es_match        = '' !== $actual_es && self::same_text( $actual_es, $expected_es );
+            $es_bypass_match = '' !== $actual_es_bypass && self::same_text( $actual_es_bypass, $expected_es );
 
-            $cache_suspected = false;
-            if (
-                ! $es_match
-                && $translation
-                && 'applied' !== $runtime_state
-                && '' !== $actual_es
-                && self::same_text( $actual_es, (string) $translation->translated_text )
-            ) {
-                $cache_suspected = true;
-            }
+            $diagnosis = self::diagnose(
+                $runtime_state,
+                $expected_es,
+                $actual_es,
+                $actual_es_bypass,
+                $translation,
+                $es_fetch,
+                $es_bypass_fetch
+            );
 
             $rows[] = array(
-                'element_id'            => $field['element_id'],
-                'context_key'           => $field['context_key'],
-                'source_text'           => (string) $field['source_text'],
-                'live_source_hash'      => (string) $field['source_hash'],
-                'source_unit_id'        => $source ? (int) $source->id : 0,
-                'stored_source_hash'    => $source ? (string) $source->source_hash : '',
-                'translated_text'       => $translation ? (string) $translation->translated_text : '',
-                'translated_from_hash'  => $translation ? (string) $translation->translated_from_hash : '',
-                'runtime_state'         => $runtime_state,
-                'expected_es'           => $expected_es,
-                'actual_en'             => $actual_en,
-                'actual_es'             => $actual_es,
-                'en_match'              => $en_match,
-                'es_match'              => $es_match,
-                'cache_suspected'       => $cache_suspected,
+                'element_id'             => $field['element_id'],
+                'context_key'            => $field['context_key'],
+                'source_text'            => (string) $field['source_text'],
+                'live_source_hash'       => (string) $field['source_hash'],
+                'source_unit_id'         => $source ? (int) $source->id : 0,
+                'stored_source_hash'     => $source ? (string) $source->source_hash : '',
+                'translated_text'        => $translation ? (string) $translation->translated_text : '',
+                'translated_from_hash'   => $translation ? (string) $translation->translated_from_hash : '',
+                'runtime_state'          => $runtime_state,
+                'expected_es'            => $expected_es,
+                'actual_en'              => $actual_en,
+                'actual_es'              => $actual_es,
+                'actual_es_bypass'       => $actual_es_bypass,
+                'en_match'               => $en_match,
+                'es_match'               => $es_match,
+                'es_bypass_match'        => $es_bypass_match,
+                'diagnosis'              => $diagnosis,
             );
         }
 
@@ -182,23 +186,44 @@ final class WEM_ML_Elementor_Runtime_Validation {
         }
 
         return array(
-            'object_id'        => $object_id,
-            'object_type'      => $post->post_type,
-            'source_json_hash' => $discovery['source_json_hash'],
-            'state'            => $state,
-            'slug'             => $slug,
-            'source_url'       => $source_url,
-            'spanish_url'      => $spanish_url,
-            'en_fetch'         => $en_fetch,
-            'es_fetch'         => $es_fetch,
-            'rows'             => $rows,
-            'overall_pass'     => $overall_pass,
+            'object_id'         => $object_id,
+            'object_type'       => $post->post_type,
+            'source_json_hash'  => $discovery['source_json_hash'],
+            'state'             => $state,
+            'slug'              => $slug,
+            'source_url'        => $source_url,
+            'spanish_url'       => $spanish_url,
+            'bypass_url'        => $bypass_url,
+            'en_fetch'          => $en_fetch,
+            'es_fetch'          => $es_fetch,
+            'es_bypass_fetch'   => $es_bypass_fetch,
+            'rows'              => $rows,
+            'overall_pass'      => $overall_pass,
         );
     }
 
-    private static function fetch_frontend( $url ) {
+    private static function empty_fetch( $error ) {
+        return array(
+            'ok'      => false,
+            'code'    => 0,
+            'body'    => '',
+            'error'   => $error,
+            'headers' => array(),
+        );
+    }
+
+    private static function fetch_frontend( $url, $bypass_cache ) {
         if ( ! $url ) {
-            return array( 'ok' => false, 'code' => 0, 'body' => '', 'error' => 'URL unavailable.' );
+            return self::empty_fetch( 'URL unavailable.' );
+        }
+
+        $headers = array(
+            'User-Agent' => 'WEM-ML-Runtime-Validation/' . WEM_ML_VERSION,
+        );
+
+        if ( $bypass_cache ) {
+            $headers['Cache-Control'] = 'no-cache, no-store, max-age=0';
+            $headers['Pragma']        = 'no-cache';
         }
 
         $response = wp_remote_get(
@@ -206,25 +231,104 @@ final class WEM_ML_Elementor_Runtime_Validation {
             array(
                 'timeout'     => 15,
                 'redirection' => 3,
-                'headers'     => array(
-                    'User-Agent' => 'WEM-ML-Runtime-Validation/' . WEM_ML_VERSION,
-                ),
+                'headers'     => $headers,
             )
         );
 
         if ( is_wp_error( $response ) ) {
-            return array( 'ok' => false, 'code' => 0, 'body' => '', 'error' => $response->get_error_message() );
+            return self::empty_fetch( $response->get_error_message() );
         }
 
-        $code = (int) wp_remote_retrieve_response_code( $response );
-        $body = (string) wp_remote_retrieve_body( $response );
+        $code             = (int) wp_remote_retrieve_response_code( $response );
+        $body             = (string) wp_remote_retrieve_body( $response );
+        $response_headers = wp_remote_retrieve_headers( $response );
 
         return array(
-            'ok'    => $code >= 200 && $code < 300 && '' !== $body,
-            'code'  => $code,
-            'body'  => $body,
-            'error' => '',
+            'ok'      => $code >= 200 && $code < 300 && '' !== $body,
+            'code'    => $code,
+            'body'    => $body,
+            'error'   => '',
+            'headers' => self::normalize_headers( $response_headers ),
         );
+    }
+
+    private static function normalize_headers( $headers ) {
+        $wanted = array(
+            'x-wem-ml-language',
+            'cf-cache-status',
+            'cache-control',
+            'age',
+            'x-cache',
+            'x-cache-enabled',
+            'x-proxy-cache',
+        );
+
+        $result = array();
+
+        foreach ( $wanted as $name ) {
+            $value = '';
+
+            if ( is_object( $headers ) && method_exists( $headers, 'offsetGet' ) ) {
+                $candidate = $headers->offsetGet( $name );
+                if ( null !== $candidate ) {
+                    $value = is_array( $candidate ) ? implode( ', ', $candidate ) : (string) $candidate;
+                }
+            } elseif ( is_array( $headers ) && isset( $headers[ $name ] ) ) {
+                $candidate = $headers[ $name ];
+                $value     = is_array( $candidate ) ? implode( ', ', $candidate ) : (string) $candidate;
+            }
+
+            $result[ $name ] = $value;
+        }
+
+        return $result;
+    }
+
+    private static function diagnose( $runtime_state, $expected_es, $actual_es, $actual_es_bypass, $translation, $es_fetch, $es_bypass_fetch ) {
+        $normal_lang = isset( $es_fetch['headers']['x-wem-ml-language'] )
+            ? strtolower( (string) $es_fetch['headers']['x-wem-ml-language'] )
+            : '';
+        $bypass_lang = isset( $es_bypass_fetch['headers']['x-wem-ml-language'] )
+            ? strtolower( (string) $es_bypass_fetch['headers']['x-wem-ml-language'] )
+            : '';
+
+        if ( $normal_lang && 'es' !== $normal_lang ) {
+            return 'LANGUAGE CONTEXT MISMATCH';
+        }
+
+        if ( $bypass_lang && 'es' !== $bypass_lang ) {
+            return 'LANGUAGE CONTEXT MISMATCH';
+        }
+
+        $normal_match = '' !== $actual_es && self::same_text( $actual_es, $expected_es );
+        $bypass_match = '' !== $actual_es_bypass && self::same_text( $actual_es_bypass, $expected_es );
+
+        if ( $normal_match && $bypass_match ) {
+            return 'PASS';
+        }
+
+        if ( ! $normal_match && $bypass_match ) {
+            return 'PAGE CACHE SUSPECTED';
+        }
+
+        if ( ! $normal_match && ! $bypass_match ) {
+            if (
+                $translation
+                && 'applied' !== $runtime_state
+                && '' !== $actual_es
+                && self::same_text( $actual_es, (string) $translation->translated_text )
+            ) {
+                return 'ELEMENTOR / RUNTIME CACHE SUSPECTED';
+            }
+
+            if ( 'applied' === $runtime_state ) {
+                return 'ELEMENTOR RUNTIME / ELEMENT CACHE SUSPECTED';
+            }
+
+            return 'RUNTIME OUTPUT MISMATCH';
+        }
+
+        return 'CHECK REQUIRED';
     }
 
     private static function extract_heading( $html, $element_id ) {
@@ -278,7 +382,7 @@ final class WEM_ML_Elementor_Runtime_Validation {
         <h2>Validation Summary</h2>
         <div class="<?php echo esc_attr( $overall_class ); ?>"><p><strong>Overall: <?php echo esc_html( $overall_text ); ?></strong></p></div>
 
-        <table class="widefat striped" style="max-width:1400px;margin-top:12px">
+        <table class="widefat striped" style="max-width:1500px;margin-top:12px">
             <tbody>
                 <tr><th style="width:220px">Object</th><td><code><?php echo esc_html( $report['object_type'] . ' #' . $report['object_id'] ); ?></code></td></tr>
                 <tr><th>Object Language State</th><td><strong><?php echo esc_html( $report['state'] ); ?></strong></td></tr>
@@ -286,11 +390,15 @@ final class WEM_ML_Elementor_Runtime_Validation {
                 <tr><th>Source JSON SHA-256</th><td><code><?php echo esc_html( $report['source_json_hash'] ); ?></code></td></tr>
                 <tr><th>English URL</th><td><code><?php echo esc_html( $report['source_url'] ); ?></code> · HTTP <?php echo esc_html( (string) $report['en_fetch']['code'] ); ?></td></tr>
                 <tr><th>Spanish URL</th><td><code><?php echo esc_html( $report['spanish_url'] ); ?></code> · HTTP <?php echo esc_html( (string) $report['es_fetch']['code'] ); ?></td></tr>
+                <tr><th>Spanish Bypass URL</th><td><code><?php echo esc_html( $report['bypass_url'] ); ?></code> · HTTP <?php echo esc_html( (string) $report['es_bypass_fetch']['code'] ); ?></td></tr>
             </tbody>
         </table>
 
+        <h2 style="margin-top:28px">Response Headers</h2>
+        <?php self::render_headers_table( $report['es_fetch'], $report['es_bypass_fetch'] ); ?>
+
         <h2 style="margin-top:28px">Heading Runtime Checks</h2>
-        <table class="widefat striped" style="max-width:1700px">
+        <table class="widefat striped" style="max-width:1900px">
             <thead>
                 <tr>
                     <th>Element</th>
@@ -299,8 +407,9 @@ final class WEM_ML_Elementor_Runtime_Validation {
                     <th>Runtime Decision</th>
                     <th>Expected ES</th>
                     <th>Actual EN</th>
-                    <th>Actual ES</th>
-                    <th>Result</th>
+                    <th>Normal ES</th>
+                    <th>Bypass ES</th>
+                    <th>Diagnosis</th>
                 </tr>
             </thead>
             <tbody>
@@ -322,21 +431,46 @@ final class WEM_ML_Elementor_Runtime_Validation {
                     </td>
                     <td><strong><?php echo esc_html( $row['runtime_state'] ); ?></strong></td>
                     <td><?php echo esc_html( $row['expected_es'] ); ?></td>
-                    <td><?php echo '' !== $row['actual_en'] ? esc_html( $row['actual_en'] ) : '<em>not detected</em>'; ?></td>
-                    <td><?php echo '' !== $row['actual_es'] ? esc_html( $row['actual_es'] ) : '<em>not detected</em>'; ?></td>
-                    <td>
-                        EN <?php echo $row['en_match'] ? '✅' : '❌'; ?><br>
-                        ES <?php echo $row['es_match'] ? '✅' : '❌'; ?>
-                        <?php if ( $row['cache_suspected'] ) : ?>
-                            <br><strong>⚠ CACHE SUSPECTED</strong>
-                        <?php endif; ?>
-                    </td>
+                    <td><?php echo '' !== $row['actual_en'] ? esc_html( $row['actual_en'] ) : '<em>not detected</em>'; ?><br><?php echo $row['en_match'] ? '✅' : '❌'; ?></td>
+                    <td><?php echo '' !== $row['actual_es'] ? esc_html( $row['actual_es'] ) : '<em>not detected</em>'; ?><br><?php echo $row['es_match'] ? '✅' : '❌'; ?></td>
+                    <td><?php echo '' !== $row['actual_es_bypass'] ? esc_html( $row['actual_es_bypass'] ) : '<em>not detected</em>'; ?><br><?php echo $row['es_bypass_match'] ? '✅' : '❌'; ?></td>
+                    <td><strong><?php echo esc_html( $row['diagnosis'] ); ?></strong></td>
                 </tr>
             <?php endforeach; ?>
             </tbody>
         </table>
 
-        <p class="description" style="margin-top:12px"><strong>说明：</strong>当 Runtime Decision 为 <code>source-drift</code>、<code>stale</code>、<code>missing-translation</code> 等非 applied 状态时，Expected ES 应回退到当前 English Source。如果 Actual ES 仍是旧 Spanish Translation，则标记 <code>CACHE SUSPECTED</code>。</p>
+        <p class="description" style="margin-top:12px"><strong>诊断规则：</strong>Normal ES 失败但 Bypass ES 成功 → <code>PAGE CACHE SUSPECTED</code>；Normal / Bypass 都失败且 Runtime Decision = <code>applied</code> → <code>ELEMENTOR RUNTIME / ELEMENT CACHE SUSPECTED</code>；<code>X-WEM-ML-Language</code> 不是 <code>es</code> → <code>LANGUAGE CONTEXT MISMATCH</code>。</p>
+        <?php
+    }
+
+    private static function render_headers_table( $normal, $bypass ) {
+        $names = array(
+            'x-wem-ml-language' => 'X-WEM-ML-Language',
+            'cf-cache-status'   => 'CF-Cache-Status',
+            'cache-control'     => 'Cache-Control',
+            'age'               => 'Age',
+            'x-cache'           => 'X-Cache',
+            'x-cache-enabled'   => 'X-Cache-Enabled',
+            'x-proxy-cache'     => 'X-Proxy-Cache',
+        );
+        ?>
+        <table class="widefat striped" style="max-width:1500px">
+            <thead><tr><th>Header</th><th>Normal ES</th><th>Bypass ES</th></tr></thead>
+            <tbody>
+            <?php foreach ( $names as $key => $label ) : ?>
+                <?php
+                $normal_value = isset( $normal['headers'][ $key ] ) && '' !== $normal['headers'][ $key ] ? $normal['headers'][ $key ] : '—';
+                $bypass_value = isset( $bypass['headers'][ $key ] ) && '' !== $bypass['headers'][ $key ] ? $bypass['headers'][ $key ] : '—';
+                ?>
+                <tr>
+                    <th><?php echo esc_html( $label ); ?></th>
+                    <td><code><?php echo esc_html( $normal_value ); ?></code></td>
+                    <td><code><?php echo esc_html( $bypass_value ); ?></code></td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
         <?php
     }
 
