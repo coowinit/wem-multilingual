@@ -140,7 +140,16 @@ final class WEM_ML_Elementor_Runtime_Overlay {
             return;
         }
 
+        // Mutate only this runtime widget instance.
         $widget->set_settings( 'title', (string) $evaluation['translated_text'] );
+
+        // Elementor caches parsed display settings. If that cache was built before
+        // this hook, set_settings() alone may not affect get_settings_for_display().
+        // Reset only the current widget's render state so render() recalculates the
+        // display settings from the runtime value above. This performs no DB write.
+        if ( method_exists( $widget, 'reset_render_state' ) ) {
+            $widget->reset_render_state();
+        }
     }
 
     private static function is_elementor_editor_or_preview() {
