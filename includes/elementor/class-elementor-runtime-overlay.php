@@ -24,7 +24,7 @@ final class WEM_ML_Elementor_Runtime_Overlay {
     public static function init() {
         add_filter( 'elementor/element/is_dynamic_content', array( __CLASS__, 'mark_managed_heading_dynamic' ), 20, 3 );
         add_filter( 'elementor/widget/render_content', array( __CLASS__, 'filter_widget_content' ), 20, 3 );
-        add_action( 'wp_footer', array( __CLASS__, 'print_validation_trace' ), 9999 );
+        add_action( 'shutdown', array( __CLASS__, 'print_validation_trace' ), 9999 );
     }
 
     public static function mark_managed_heading_dynamic( $is_dynamic, $raw_data, $element ) {
@@ -44,8 +44,8 @@ final class WEM_ML_Elementor_Runtime_Overlay {
             return $is_dynamic;
         }
 
-        $object_id = self::get_current_object_id();
-        $post      = $object_id > 0 ? get_post( $object_id ) : null;
+        $object_id  = self::get_current_object_id();
+        $post       = $object_id > 0 ? get_post( $object_id ) : null;
         $element_id = (string) $element->get_id();
         $context_key = sprintf( 'elementor:%d:%s:heading:title', $object_id, $element_id );
 
@@ -215,6 +215,7 @@ final class WEM_ML_Elementor_Runtime_Overlay {
 
         $pattern = '~(<h([1-6])\\b[^>]*\\bclass=(["\\\'])[^"\\\']*\\belementor-heading-title\\b[^"\\\']*\\3[^>]*>)(.*?)(</h\\2>)~is';
 
+        $replace_count = 0;
         $replaced = preg_replace_callback(
             $pattern,
             static function ( $matches ) use ( $translated_text ) {
@@ -285,6 +286,11 @@ final class WEM_ML_Elementor_Runtime_Overlay {
         if ( ! self::is_validation_request() ) {
             return;
         }
+
+        self::trace( 'runtime_trace_shutdown', array(
+            'object_id' => self::get_current_object_id(),
+            'result'    => 'overlay-loaded',
+        ) );
 
         $payload = wp_json_encode( self::$validation_trace, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
 
