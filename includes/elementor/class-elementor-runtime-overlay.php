@@ -20,14 +20,6 @@ final class WEM_ML_Elementor_Runtime_Overlay {
         add_action( 'elementor/frontend/widget/before_render', array( __CLASS__, 'before_widget_render' ), 20 );
     }
 
-    /**
-     * Evaluate one Heading widget for a safe Spanish runtime overlay.
-     *
-     * @param object $widget Elementor widget instance.
-     * @param int    $object_id Current WordPress object ID.
-     * @param string $language Target language.
-     * @return array<string,mixed>
-     */
     public static function evaluate_heading( $widget, $object_id, $language = 'es' ) {
         $result = array(
             'state'                => 'invalid-widget',
@@ -97,7 +89,6 @@ final class WEM_ML_Elementor_Runtime_Overlay {
 
         $result['stored_source_hash'] = (string) $source->source_hash;
 
-        // Elementor changed but the WEM Source Unit has not been synchronized yet.
         if ( ! hash_equals( (string) $source->source_hash, (string) $result['live_source_hash'] ) ) {
             $result['state'] = 'source-drift';
             return $result;
@@ -124,12 +115,6 @@ final class WEM_ML_Elementor_Runtime_Overlay {
         return $result;
     }
 
-    /**
-     * Temporarily replace one Heading title in Spanish frontend requests.
-     *
-     * @param object $widget Elementor widget instance.
-     * @return void
-     */
     public static function before_widget_render( $widget ) {
         if ( is_admin() || 'es' !== WEM_ML_Language_Context::get_current_language() ) {
             return;
@@ -155,22 +140,15 @@ final class WEM_ML_Elementor_Runtime_Overlay {
             return;
         }
 
-        // Runtime-only mutation of this PHP widget instance.
-        // No Elementor document save or post meta write occurs here.
         $widget->set_settings( 'title', (string) $evaluation['translated_text'] );
     }
 
-    /**
-     * Keep Elementor editor/preview source-facing and free from runtime overlays.
-     *
-     * @return bool
-     */
     private static function is_elementor_editor_or_preview() {
         if ( ! class_exists( '\\Elementor\\Plugin' ) ) {
             return false;
         }
 
-        $plugin = \\Elementor\\Plugin::$instance;
+        $plugin = \Elementor\Plugin::$instance;
 
         if ( isset( $plugin->editor ) && method_exists( $plugin->editor, 'is_edit_mode' ) && $plugin->editor->is_edit_mode() ) {
             return true;
