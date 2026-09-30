@@ -1,14 +1,15 @@
 <?php
 /**
- * Elementor widget-scoped runtime overlay.
+ * Elementor structured runtime overlay.
  *
- * v0.1.1 Step 5A/5B:
+ * v0.1.1 Step 5A/5B/5A-R3:
  * - Heading only.
  * - Spanish only.
  * - Current/reviewed translations only.
- * - Runtime mutation is limited to the current Heading widget HTML.
- * - WEM-managed Spanish Heading output is treated as dynamic to avoid
- *   Elementor reusing stale language-dependent element HTML.
+ * - Prefer exact widget identity: object_id + element_id + heading:title.
+ * - Widget hooks are retained for diagnostics, but the stable fallback overlay
+ *   runs at elementor/frontend/the_content because Elementor may serve cached
+ *   element HTML without re-entering widget-level render hooks.
  * - Never writes _elementor_data or Elementor documents.
  */
 
@@ -24,6 +25,7 @@ final class WEM_ML_Elementor_Runtime_Overlay {
     public static function init() {
         add_filter( 'elementor/element/is_dynamic_content', array( __CLASS__, 'mark_managed_heading_dynamic' ), 20, 3 );
         add_filter( 'elementor/widget/render_content', array( __CLASS__, 'filter_widget_content' ), 20, 3 );
+        add_filter( 'elementor/frontend/the_content', array( __CLASS__, 'filter_elementor_content' ), 20 );
         add_action( 'shutdown', array( __CLASS__, 'print_validation_trace' ), 9999 );
     }
 
@@ -44,9 +46,9 @@ final class WEM_ML_Elementor_Runtime_Overlay {
             return $is_dynamic;
         }
 
-        $object_id  = self::get_current_object_id();
-        $post       = $object_id > 0 ? get_post( $object_id ) : null;
-        $element_id = (string) $element->get_id();
+        $object_id   = self::get_current_object_id();
+        $post        = $object_id > 0 ? get_post( $object_id ) : null;
+        $element_id  = (string) $element->get_id();
         $context_key = sprintf( 'elementor:%d:%s:heading:title', $object_id, $element_id );
 
         if ( ! $post || ! in_array( $post->post_type, array( 'page', 'post' ), true ) ) {
@@ -129,7 +131,6 @@ final class WEM_ML_Elementor_Runtime_Overlay {
         }
 
         $source_text = (string) $widget->get_settings( 'title' );
-
         if ( '' === trim( $source_text ) ) {
             $result['state'] = 'empty-source';
             return $result;
@@ -143,7 +144,6 @@ final class WEM_ML_Elementor_Runtime_Overlay {
         $result['live_source_hash'] = WEM_ML_Translation_Repository::hash_text( $source_text );
 
         $source = WEM_ML_Source_Unit_Repository::get_by_context( $context_key );
-
         if ( ! $source || 'elementor_widget_field' !== (string) $source->context_type || 'active' !== (string) $source->state ) {
             $result['state'] = 'missing-source';
             return $result;
@@ -157,7 +157,6 @@ final class WEM_ML_Elementor_Runtime_Overlay {
         }
 
         $translation = WEM_ML_Translation_Repository::get_translation( (int) $source->id, $language );
-
         if ( ! $translation || 'reviewed' !== (string) $translation->status || '' === trim( (string) $translation->translated_text ) ) {
             $result['state'] = 'missing-translation';
             return $result;
@@ -207,22 +206,11 @@ final class WEM_ML_Elementor_Runtime_Overlay {
             return $widget_content;
         }
 
-        $translated_text = (string) $evaluation['translated_text'];
-
-        if ( '' === trim( $translated_text ) ) {
-            return $widget_content;
-        }
-
-        $pattern = '~(<h([1-6])\\b[^>]*\\bclass=(["\\\'])[^"\\\']*\\belementor-heading-title\\b[^"\\\']*\\3[^>]*>)(.*?)(</h\\2>)~is';
-
         $replace_count = 0;
-        $replaced = preg_replace_callback(
-            $pattern,
-            static function ( $matches ) use ( $translated_text ) {
-                return $matches[1] . esc_html( $translated_text ) . $matches[5];
-            },
+        $replaced      = self::replace_heading_inner_html(
             (string) $widget_content,
-            1,
+            '',
+            (string) $evaluation['translated_text'],
             $replace_count
         );
 
@@ -233,7 +221,144 @@ final class WEM_ML_Elementor_Runtime_Overlay {
             'result'        => $replace_count > 0 ? 'replaced' : 'pattern-miss',
         ) );
 
-        return is_string( $replaced ) ? $replaced : $widget_content;
+        return $replaced;
+    }
+
+    /**
+     * Step 5A-R3: final Elementor-content structured overlay.
+     *
+     * This is not a global text translator. It first discovers adapter-approved
+     * Heading.title fields, resolves their WEM Source Unit/Translation state,
+     * then targets only the exact Elementor wrapper identified by data-id.
+     */
+    public static function filter_elementor_content( $content ) {
+        if ( is_admin() || 'es' !== WEM_ML_Language_Context::get_current_language() ) {
+            return $content;
+        }
+
+        if ( self::is_elementor_editor_or_preview() ) {
+            return $content;
+        }
+
+        $object_id = self::get_current_object_id();
+        $post      = $object_id > 0 ? get_post( $object_id ) : null;
+
+        if ( ! $post || ! in_array( $post->post_type, array( 'page', 'post' ), true ) ) {
+            return $content;
+        }
+
+        if ( ! WEM_ML_Object_State::is_published( $post->post_type, $object_id, 'es' ) ) {
+            self::trace( 'frontend_the_content', array(
+                'object_id' => $object_id,
+                'state'     => 'not-published',
+                'result'    => 'fallback-source',
+            ) );
+            return $content;
+        }
+
+        $discovery = WEM_ML_Elementor_Source_Discovery::discover( $object_id );
+        if ( is_wp_error( $discovery ) ) {
+            self::trace( 'frontend_the_content', array(
+                'object_id' => $object_id,
+                'state'     => 'discovery-error',
+                'result'    => $discovery->get_error_code(),
+            ) );
+            return $content;
+        }
+
+        $output = (string) $content;
+
+        foreach ( $discovery['fields'] as $field ) {
+            if (
+                ! isset( $field['widget_type'], $field['setting_path'] )
+                || 'heading' !== (string) $field['widget_type']
+                || 'title' !== (string) $field['setting_path']
+            ) {
+                continue;
+            }
+
+            $source = WEM_ML_Source_Unit_Repository::get_by_context( (string) $field['context_key'] );
+            $state  = 'missing-source';
+
+            if ( ! $source || 'elementor_widget_field' !== (string) $source->context_type || 'active' !== (string) $source->state ) {
+                self::trace_content_field( $object_id, $field, $state, 0 );
+                continue;
+            }
+
+            if ( ! hash_equals( (string) $source->source_hash, (string) $field['source_hash'] ) ) {
+                self::trace_content_field( $object_id, $field, 'source-drift', 0 );
+                continue;
+            }
+
+            $translation = WEM_ML_Translation_Repository::get_translation( (int) $source->id, 'es' );
+
+            if ( ! $translation || 'reviewed' !== (string) $translation->status || '' === trim( (string) $translation->translated_text ) ) {
+                self::trace_content_field( $object_id, $field, 'missing-translation', 0 );
+                continue;
+            }
+
+            if ( WEM_ML_Translation_Repository::is_stale( $source, $translation ) ) {
+                self::trace_content_field( $object_id, $field, 'stale', 0 );
+                continue;
+            }
+
+            $replace_count = 0;
+            $output        = self::replace_heading_inner_html(
+                $output,
+                (string) $field['element_id'],
+                (string) $translation->translated_text,
+                $replace_count
+            );
+
+            self::trace_content_field( $object_id, $field, 'applied', $replace_count );
+        }
+
+        return $output;
+    }
+
+    private static function trace_content_field( $object_id, $field, $state, $replace_count ) {
+        self::trace( 'frontend_the_content', array(
+            'object_id'     => (int) $object_id,
+            'element_id'    => isset( $field['element_id'] ) ? (string) $field['element_id'] : '',
+            'context_key'   => isset( $field['context_key'] ) ? (string) $field['context_key'] : '',
+            'state'         => (string) $state,
+            'replace_count' => (int) $replace_count,
+            'result'        => $replace_count > 0 ? 'replaced' : 'fallback-source',
+        ) );
+    }
+
+    /**
+     * Replace the inner HTML of one Elementor Heading.
+     *
+     * When $element_id is provided, the search starts at the exact Elementor
+     * wrapper data-id and then finds its Heading title. When it is empty, this
+     * helper operates on already widget-scoped HTML from render_content.
+     */
+    private static function replace_heading_inner_html( $html, $element_id, $translated_text, &$replace_count ) {
+        $replace_count = 0;
+        $html          = (string) $html;
+
+        if ( '' === trim( (string) $translated_text ) || '' === $html ) {
+            return $html;
+        }
+
+        if ( '' !== $element_id ) {
+            $pattern = '~(?P<prefix><[^>]+\\bdata-id=["\\\']' . preg_quote( $element_id, '~' ) . '["\\\'][^>]*>[\\s\\S]{0,20000}?<h[1-6]\\b[^>]*\\bclass=["\\\'][^"\\\']*\\belementor-heading-title\\b[^"\\\']*["\\\'][^>]*>)(?P<inner>.*?)(?P<suffix></h[1-6]>)~is';
+        } else {
+            $pattern = '~(?P<prefix><h[1-6]\\b[^>]*\\bclass=["\\\'][^"\\\']*\\belementor-heading-title\\b[^"\\\']*["\\\'][^>]*>)(?P<inner>.*?)(?P<suffix></h[1-6]>)~is';
+        }
+
+        $replaced = preg_replace_callback(
+            $pattern,
+            static function ( $matches ) use ( $translated_text ) {
+                return $matches['prefix'] . esc_html( $translated_text ) . $matches['suffix'];
+            },
+            $html,
+            1,
+            $replace_count
+        );
+
+        return is_string( $replaced ) ? $replaced : $html;
     }
 
     private static function get_current_object_id() {
