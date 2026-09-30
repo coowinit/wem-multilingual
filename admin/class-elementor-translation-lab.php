@@ -1,9 +1,10 @@
 <?php
 /**
- * Elementor Translation Lab - v0.1.1 Step 4A.
+ * Elementor Translation Lab - v0.1.1 Step 4A / Step 5C-3A.
  *
  * Manual Spanish translation for existing Elementor Source Units.
- * Repository-only experiment: no runtime overlay and no Elementor source mutation.
+ * Step 5C-3A adds targeted object-cache invalidation after a real
+ * translation change. It still never mutates Elementor source data.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -52,20 +53,52 @@ final class WEM_ML_Elementor_Translation_Lab {
             self::redirect_with_notice( $object_id, 'error', 'Spanish Translation 不能为空。' );
         }
 
+        $existing_translation = WEM_ML_Translation_Repository::get_translation( $string_id, 'es' );
+        $translation_changed  = ! $existing_translation
+            || (string) $existing_translation->translated_text !== $translated_text
+            || (string) $existing_translation->translated_from_hash !== (string) $source->source_hash
+            || 'reviewed' !== (string) $existing_translation->status;
+
         $result = WEM_ML_Translation_Repository::save_spanish_translation( $string_id, $translated_text );
 
         if ( is_wp_error( $result ) ) {
             self::redirect_with_notice( $object_id, 'error', $result->get_error_message() );
         }
 
-        self::redirect_with_notice( $object_id, 'success', 'Spanish Translation 已保存。' );
+        $message = 'Spanish Translation 已保存。';
+
+        if ( $translation_changed ) {
+            $cache_result = WEM_ML_Cache_Invalidator::purge_object( $object_id );
+
+            if ( is_wp_error( $cache_result ) ) {
+                $message .= ' Translation 已更新，但目标缓存自动清理未执行：' . $cache_result->get_error_message();
+                self::redirect_with_notice( $object_id, 'warning', $message );
+            }
+
+            $purged_count = isset( $cache_result['purged'] ) && is_array( $cache_result['purged'] )
+                ? count( $cache_result['purged'] )
+                : 0;
+            $provider = isset( $cache_result['provider'] ) ? (string) $cache_result['provider'] : 'unknown';
+            $method   = isset( $cache_result['method'] ) ? (string) $cache_result['method'] : 'unknown';
+
+            $message .= sprintf(
+                ' Targeted cache purge 已自动执行：%d 个 URL；Provider=%s；Method=%s。',
+                $purged_count,
+                $provider,
+                $method
+            );
+        } else {
+            $message .= ' 内容与当前 reviewed Translation 一致，本次未触发缓存清理。';
+        }
+
+        self::redirect_with_notice( $object_id, 'success', $message );
     }
 
     private static function redirect_with_notice( $object_id, $status, $message ) {
         $url = add_query_arg(
             array(
-                'page'      => 'wem-multilingual-elementor-translation-lab',
-                'object_id' => absint( $object_id ),
+                'page'       => 'wem-multilingual-elementor-translation-lab',
+                'object_id'  => absint( $object_id ),
                 'wem_status' => sanitize_key( $status ),
                 'wem_notice' => rawurlencode( $message ),
             ),
@@ -87,8 +120,8 @@ final class WEM_ML_Elementor_Translation_Lab {
         ?>
         <div class="wrap">
             <h1>WEM ML Elementor Translation</h1>
-            <p><strong>v0.1.1 · Step 4A · Manual Spanish Translation</strong></p>
-            <p>本页只对已经存在的 <code>elementor_widget_field</code> Source Unit 保存 Spanish Translation 到 <code>wp_wem_ml_translations</code>。不会修改 <code>_elementor_data</code>，也不会在前台应用 Runtime Overlay。</p>
+            <p><strong>v0.1.1 · Step 5C-3A · Translation + Automatic Targeted Cache Invalidation</strong></p>
+            <p>本页对已经存在的 <code>elementor_widget_field</code> Source Unit 保存 Spanish Translation 到 <code>wp_wem_ml_translations</code>。当 Translation 实际发生变化时，会自动清理当前对象的 EN / ES 目标页面缓存；不会修改 <code>_elementor_data</code>。</p>
 
             <?php self::render_notice(); ?>
 
@@ -100,7 +133,7 @@ final class WEM_ML_Elementor_Translation_Lab {
                         <th scope="row"><label for="wem-ml-elementor-translation-object-id">Content Object ID</label></th>
                         <td>
                             <input id="wem-ml-elementor-translation-object-id" name="object_id" type="number" min="1" required class="small-text" value="<?php echo $object_id ? esc_attr( (string) $object_id ) : ''; ?>">
-                            <p class="description">Step 4A 建议继续使用已同步的 <code>products #52</code>。</p>
+                            <p class="description">当前 Runtime / Cache 回归实验可继续使用已同步的 Page <code>#1730</code>。</p>
                         </td>
                     </tr>
                 </table>
@@ -113,7 +146,7 @@ final class WEM_ML_Elementor_Translation_Lab {
                 <?php if ( ! $post || 'revision' === $post->post_type ) : ?>
                     <div class="notice notice-error inline"><p>没有找到可测试的 WordPress Content Object。</p></div>
                 <?php elseif ( empty( $units ) ) : ?>
-                    <div class="notice notice-warning inline"><p>当前对象还没有 Elementor Source Unit。请先完成 Step 3A Source Unit Sync。</p></div>
+                    <div class="notice notice-warning inline"><p>当前对象还没有 Elementor Source Unit。请先完成 Source Unit Sync。</p></div>
                 <?php else : ?>
                     <table class="widefat striped" style="max-width:1500px">
                         <thead>
@@ -149,7 +182,7 @@ final class WEM_ML_Elementor_Translation_Lab {
                     </table>
 
                     <h2 style="margin-top:28px">3. Manual Spanish Translation</h2>
-                    <p>Step 4A 建议只翻译第一条 <code>Product Parameters</code>，其他 Source Unit 暂时保持 <code>missing</code>。</p>
+                    <p>选择一个 Source Unit 保存 Spanish Translation。只有译文内容、状态或绑定 Source Hash 实际发生变化时，才触发当前对象的 targeted cache purge。</p>
 
                     <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="max-width:1000px">
                         <input type="hidden" name="action" value="wem_ml_save_elementor_spanish_translation">
@@ -172,7 +205,7 @@ final class WEM_ML_Elementor_Translation_Lab {
                             <tr>
                                 <th scope="row"><label for="wem-ml-spanish-translation">Spanish Translation</label></th>
                                 <td>
-                                    <input id="wem-ml-spanish-translation" name="translated_text" type="text" class="regular-text" required placeholder="Parámetros del producto">
+                                    <input id="wem-ml-spanish-translation" name="translated_text" type="text" class="regular-text" required placeholder="输入 Spanish Translation">
                                     <p class="description">保存时会把当前 Source Hash 写入 <code>translated_from_hash</code>。</p>
                                 </td>
                             </tr>
@@ -181,7 +214,7 @@ final class WEM_ML_Elementor_Translation_Lab {
                         <?php submit_button( '保存 Spanish Translation', 'primary' ); ?>
                     </form>
 
-                    <p class="description"><strong>Step 4A 验收重点：</strong>保存后第一条应从 <code>missing</code> 变为 <code>current</code>；<code>translated_from_hash</code> 应与当前 <code>source_hash</code> 一致；其余 5 条仍保持 <code>missing</code>。</p>
+                    <p class="description"><strong>Step 5C-3A 验收重点：</strong>修改 Translation 保存后应自动 targeted purge；无需手动清 WP Rocket，Runtime Validation 的 Normal ES 应直接得到新译文。重复保存完全相同的 current Translation 时，不应再次清缓存。</p>
                 <?php endif; ?>
             <?php endif; ?>
         </div>
@@ -203,7 +236,14 @@ final class WEM_ML_Elementor_Translation_Lab {
 
         $status  = isset( $_GET['wem_status'] ) ? sanitize_key( (string) $_GET['wem_status'] ) : 'success';
         $message = sanitize_text_field( rawurldecode( (string) $_GET['wem_notice'] ) );
-        $class   = 'error' === $status ? 'notice notice-error' : 'notice notice-success';
+
+        if ( 'error' === $status ) {
+            $class = 'notice notice-error';
+        } elseif ( 'warning' === $status ) {
+            $class = 'notice notice-warning';
+        } else {
+            $class = 'notice notice-success';
+        }
 
         echo '<div class="' . esc_attr( $class ) . ' is-dismissible"><p>' . esc_html( $message ) . '</p></div>';
     }
