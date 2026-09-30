@@ -6,7 +6,7 @@
  * - Heading only.
  * - Spanish only.
  * - Current/reviewed translations only.
- * - Runtime mutation of the current Elementor widget instance only.
+ * - Runtime mutation is limited to the current Heading widget HTML.
  * - WEM-managed Spanish Heading output is treated as dynamic to avoid
  *   Elementor reusing stale language-dependent element HTML.
  * - Never writes _elementor_data or Elementor documents.
@@ -20,7 +20,7 @@ final class WEM_ML_Elementor_Runtime_Overlay {
 
     public static function init() {
         add_filter( 'elementor/element/is_dynamic_content', array( __CLASS__, 'mark_managed_heading_dynamic' ), 20, 3 );
-        add_action( 'elementor/frontend/widget/before_render', array( __CLASS__, 'before_widget_render' ), 20 );
+        add_filter( 'elementor/widget/render_content', array( __CLASS__, 'filter_widget_content' ), 20, 3 );
     }
 
     /**
@@ -53,13 +53,8 @@ final class WEM_ML_Elementor_Runtime_Overlay {
             return $is_dynamic;
         }
 
-        $object_id = get_queried_object_id();
-
-        if ( $object_id <= 0 ) {
-            $object_id = get_the_ID();
-        }
-
-        $post = $object_id > 0 ? get_post( $object_id ) : null;
+        $object_id = self::get_current_object_id();
+        $post      = $object_id > 0 ? get_post( $object_id ) : null;
 
         if ( ! $post || ! in_array( $post->post_type, array( 'page', 'post' ), true ) ) {
             return $is_dynamic;
@@ -80,6 +75,14 @@ final class WEM_ML_Elementor_Runtime_Overlay {
         return true;
     }
 
+    /**
+     * Evaluate one Heading widget for a safe Spanish runtime overlay.
+     *
+     * @param object $widget    Elementor widget instance.
+     * @param int    $object_id Current WordPress object ID.
+     * @param string $language  Target language.
+     * @return array<string,mixed>
+     */
     public static function evaluate_heading( $widget, $object_id, $language = 'es' ) {
         $result = array(
             'state'                => 'invalid-widget',
@@ -175,43 +178,81 @@ final class WEM_ML_Elementor_Runtime_Overlay {
         return $result;
     }
 
-    public static function before_widget_render( $widget ) {
+    /**
+     * Overlay only the current Heading widget's rendered HTML.
+     *
+     * Elementor can route dynamic elements through its shortcode/cache render
+     * path. Filtering the final widget content is more stable than mutating the
+     * widget settings earlier in the render lifecycle, while remaining fully
+     * widget-scoped (not a whole-page DOM/string translator).
+     *
+     * @param string $widget_content Rendered widget HTML.
+     * @param object $widget         Elementor widget instance.
+     * @param array  $args           Elementor render metadata.
+     * @return string
+     */
+    public static function filter_widget_content( $widget_content, $widget, $args = array() ) {
         if ( is_admin() || 'es' !== WEM_ML_Language_Context::get_current_language() ) {
-            return;
+            return $widget_content;
         }
 
         if ( self::is_elementor_editor_or_preview() ) {
-            return;
+            return $widget_content;
         }
 
         if ( ! is_object( $widget ) || ! method_exists( $widget, 'get_name' ) || 'heading' !== (string) $widget->get_name() ) {
-            return;
+            return $widget_content;
         }
 
+        $object_id  = self::get_current_object_id();
+        $evaluation = self::evaluate_heading( $widget, $object_id, 'es' );
+
+        if ( empty( $evaluation['can_overlay'] ) ) {
+            return $widget_content;
+        }
+
+        $translated_text = (string) $evaluation['translated_text'];
+
+        if ( '' === trim( $translated_text ) ) {
+            return $widget_content;
+        }
+
+        // Heading widget output is a single h1-h6 element with the
+        // elementor-heading-title class. Replace only that element's inner HTML.
+        $pattern = '~(<h([1-6])\\b[^>]*\\bclass=(["\\\'])[^"\\\']*\\belementor-heading-title\\b[^"\\\']*\\3[^>]*>)(.*?)(</h\\2>)~is';
+
+        $replaced = preg_replace_callback(
+            $pattern,
+            static function ( $matches ) use ( $translated_text ) {
+                return $matches[1] . esc_html( $translated_text ) . $matches[5];
+            },
+            (string) $widget_content,
+            1
+        );
+
+        return is_string( $replaced ) ? $replaced : $widget_content;
+    }
+
+    /**
+     * Return the current queried WordPress object ID.
+     *
+     * @return int
+     */
+    private static function get_current_object_id() {
         $object_id = get_queried_object_id();
 
         if ( $object_id <= 0 ) {
             $object_id = get_the_ID();
         }
 
-        $evaluation = self::evaluate_heading( $widget, $object_id, 'es' );
-
-        if ( empty( $evaluation['can_overlay'] ) || ! method_exists( $widget, 'set_settings' ) ) {
-            return;
-        }
-
-        // Mutate only this runtime widget instance.
-        $widget->set_settings( 'title', (string) $evaluation['translated_text'] );
-
-        // Elementor caches parsed display settings. If that cache was built before
-        // this hook, set_settings() alone may not affect get_settings_for_display().
-        // Reset only the current widget's render state so render() recalculates the
-        // display settings from the runtime value above. This performs no DB write.
-        if ( method_exists( $widget, 'reset_render_state' ) ) {
-            $widget->reset_render_state();
-        }
+        return absint( $object_id );
     }
 
+    /**
+     * Keep Elementor editor/preview source-facing and free from runtime overlays.
+     *
+     * @return bool
+     */
     private static function is_elementor_editor_or_preview() {
         if ( ! class_exists( '\\Elementor\\Plugin' ) ) {
             return false;
