@@ -1,10 +1,10 @@
 <?php
 /**
- * Elementor Translation Lab - v0.1.1 Step 4A / Step 5C-3A.
+ * Elementor Structured Translation Lab - v0.1.1.
  *
  * Manual Spanish translation for existing Elementor Source Units.
- * Step 5C-3A adds targeted object-cache invalidation after a real
- * translation change. It still never mutates Elementor source data.
+ * Translation changes trigger targeted object-cache invalidation.
+ * The lab never mutates Elementor source data.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -120,7 +120,7 @@ final class WEM_ML_Elementor_Translation_Lab {
         ?>
         <div class="wrap">
             <h1>WEM ML Elementor Translation</h1>
-            <p><strong>v0.1.1 · Step 5C-3A · Translation + Automatic Targeted Cache Invalidation</strong></p>
+            <p><strong>v0.1.1 · Elementor Structured Translation Lab</strong></p>
             <p>本页对已经存在的 <code>elementor_widget_field</code> Source Unit 保存 Spanish Translation 到 <code>wp_wem_ml_translations</code>。当 Translation 实际发生变化时，会自动清理当前对象的 EN / ES 目标页面缓存；不会修改 <code>_elementor_data</code>。</p>
 
             <?php self::render_notice(); ?>
@@ -214,7 +214,7 @@ final class WEM_ML_Elementor_Translation_Lab {
                         <?php submit_button( '保存 Spanish Translation', 'primary' ); ?>
                     </form>
 
-                    <p class="description"><strong>Step 5C-3A 验收重点：</strong>修改 Translation 保存后应自动 targeted purge；无需手动清 WP Rocket，Runtime Validation 的 Normal ES 应直接得到新译文。重复保存完全相同的 current Translation 时，不应再次清缓存。</p>
+                    <p class="description"><strong>回归重点：</strong>Translation 真正变化时自动 targeted purge；重复保存完全相同的 current Translation 时不重复清缓存。Heading.title 与 Button.text 共用同一 Translation Repository 规则。</p>
                 <?php endif; ?>
             <?php endif; ?>
         </div>
