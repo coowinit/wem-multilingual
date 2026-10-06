@@ -79,6 +79,8 @@ final class WEM_ML_Admin {
             ? sanitize_key( wp_unslash( $_POST['status'] ) )
             : 'draft';
 
+        $previous_status = WEM_ML_Object_State::get_status( $object_type, $object_id, 'es' );
+
         $result = WEM_ML_Object_State::save(
             $object_type,
             $object_id,
@@ -86,7 +88,27 @@ final class WEM_ML_Admin {
             $status
         );
 
-        self::redirect_with_result( $result, 'wem_ml_state_saved' );
+        $extra_args = array();
+
+        if ( ! is_wp_error( $result ) ) {
+            if ( (string) $previous_status !== (string) $status ) {
+                $purge = WEM_ML_Cache_Invalidator::purge_object( $object_id );
+
+                if ( is_wp_error( $purge ) ) {
+                    $extra_args['wem_ml_cache_status']  = 'error';
+                    $extra_args['wem_ml_cache_message'] = rawurlencode( $purge->get_error_message() );
+                } else {
+                    $extra_args['wem_ml_cache_status'] = 'purged';
+                    $extra_args['wem_ml_cache_count']  = count( $purge['purged'] );
+                    $extra_args['wem_ml_cache_provider'] = sanitize_key( $purge['provider'] );
+                    $extra_args['wem_ml_cache_method'] = sanitize_key( $purge['method'] );
+                }
+            } else {
+                $extra_args['wem_ml_cache_status'] = 'unchanged';
+            }
+        }
+
+        self::redirect_with_result( $result, 'wem_ml_state_saved', $extra_args );
     }
 
     private static function guard_admin_action( $nonce_action ) {
@@ -97,13 +119,17 @@ final class WEM_ML_Admin {
         check_admin_referer( $nonce_action );
     }
 
-    private static function redirect_with_result( $result, $success_key ) {
+    private static function redirect_with_result( $result, $success_key, $extra_args = array() ) {
         $args = array( 'page' => 'wem-multilingual' );
 
         if ( is_wp_error( $result ) ) {
             $args['wem_ml_error'] = rawurlencode( $result->get_error_message() );
         } else {
             $args[ $success_key ] = '1';
+
+            if ( ! empty( $extra_args ) && is_array( $extra_args ) ) {
+                $args = array_merge( $args, $extra_args );
+            }
         }
 
         wp_safe_redirect( add_query_arg( $args, admin_url( 'tools.php' ) ) );
@@ -243,6 +269,31 @@ final class WEM_ML_Admin {
         }
         if ( isset( $_GET['wem_ml_state_saved'] ) ) {
             echo '<div class="notice notice-success is-dismissible"><p>Object Language State 已保存。</p></div>';
+        }
+        if ( isset( $_GET['wem_ml_cache_status'] ) ) {
+            $cache_status = sanitize_key( wp_unslash( (string) $_GET['wem_ml_cache_status'] ) );
+
+            if ( 'purged' === $cache_status ) {
+                $count    = isset( $_GET['wem_ml_cache_count'] ) ? absint( $_GET['wem_ml_cache_count'] ) : 0;
+                $provider = isset( $_GET['wem_ml_cache_provider'] ) ? sanitize_key( wp_unslash( (string) $_GET['wem_ml_cache_provider'] ) ) : '';
+                $method   = isset( $_GET['wem_ml_cache_method'] ) ? sanitize_key( wp_unslash( (string) $_GET['wem_ml_cache_method'] ) ) : '';
+
+                echo '<div class="notice notice-success is-dismissible"><p>State 变化后已自动执行 targeted cache purge：'
+                    . esc_html( (string) $count )
+                    . ' 个 URL；Provider=' . esc_html( $provider )
+                    . '；Method=' . esc_html( $method )
+                    . '。</p></div>';
+            } elseif ( 'unchanged' === $cache_status ) {
+                echo '<div class="notice notice-info is-dismissible"><p>Object Language State 与当前值一致，本次未触发缓存清理。</p></div>';
+            } elseif ( 'error' === $cache_status ) {
+                $message = isset( $_GET['wem_ml_cache_message'] )
+                    ? sanitize_text_field( rawurldecode( wp_unslash( (string) $_GET['wem_ml_cache_message'] ) ) )
+                    : '缓存清理失败。';
+
+                echo '<div class="notice notice-warning is-dismissible"><p>Object Language State 已保存，但 targeted cache purge 失败：'
+                    . esc_html( $message )
+                    . '</p></div>';
+            }
         }
         if ( isset( $_GET['wem_ml_error'] ) ) {
             echo '<div class="notice notice-error"><p>' . esc_html( wp_unslash( $_GET['wem_ml_error'] ) ) . '</p></div>';
