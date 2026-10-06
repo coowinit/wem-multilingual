@@ -2,14 +2,13 @@
 /**
  * Elementor structured runtime overlay.
  *
- * v0.1.1 Step 5A/5B/5A-R3:
- * - Heading only.
+ * v0.1.1 Step 5A-5E:
+ * - Heading.title + Button.text.
  * - Spanish only.
  * - Current/reviewed translations only.
- * - Prefer exact widget identity: object_id + element_id + heading:title.
- * - Widget hooks are retained for diagnostics, but the stable fallback overlay
- *   runs at elementor/frontend/the_content because Elementor may serve cached
- *   element HTML without re-entering widget-level render hooks.
+ * - Exact widget identity: object_id + element_id + widget_type + setting_path.
+ * - Widget hooks are retained for diagnostics, while the stable structured overlay
+ *   also runs at elementor/frontend/the_content for Elementor cached render paths.
  * - Never writes _elementor_data or Elementor documents.
  */
 
@@ -23,13 +22,13 @@ final class WEM_ML_Elementor_Runtime_Overlay {
     private static $validation_trace = array();
 
     public static function init() {
-        add_filter( 'elementor/element/is_dynamic_content', array( __CLASS__, 'mark_managed_heading_dynamic' ), 20, 3 );
+        add_filter( 'elementor/element/is_dynamic_content', array( __CLASS__, 'mark_managed_widget_dynamic' ), 20, 3 );
         add_filter( 'elementor/widget/render_content', array( __CLASS__, 'filter_widget_content' ), 20, 3 );
         add_filter( 'elementor/frontend/the_content', array( __CLASS__, 'filter_elementor_content' ), 20 );
         add_action( 'shutdown', array( __CLASS__, 'print_validation_trace' ), 9999 );
     }
 
-    public static function mark_managed_heading_dynamic( $is_dynamic, $raw_data, $element ) {
+    public static function mark_managed_widget_dynamic( $is_dynamic, $raw_data, $element ) {
         if ( $is_dynamic || is_admin() || 'es' !== WEM_ML_Language_Context::get_current_language() ) {
             return $is_dynamic;
         }
@@ -42,49 +41,57 @@ final class WEM_ML_Elementor_Runtime_Overlay {
             return $is_dynamic;
         }
 
-        if ( 'heading' !== (string) $element->get_name() ) {
+        $widget_type = sanitize_key( (string) $element->get_name() );
+        $fields      = WEM_ML_Elementor_Adapter_Registry::get_fields_for_widget( $widget_type );
+
+        if ( empty( $fields ) ) {
             return $is_dynamic;
         }
 
-        $object_id   = self::get_current_object_id();
-        $post        = $object_id > 0 ? get_post( $object_id ) : null;
-        $element_id  = (string) $element->get_id();
-        $context_key = sprintf( 'elementor:%d:%s:heading:title', $object_id, $element_id );
+        $object_id  = self::get_current_object_id();
+        $post       = $object_id > 0 ? get_post( $object_id ) : null;
+        $element_id = (string) $element->get_id();
 
         if ( ! $post || ! in_array( $post->post_type, array( 'page', 'post' ), true ) ) {
-            self::trace( 'is_dynamic_content', array(
-                'object_id'   => $object_id,
-                'element_id'  => $element_id,
-                'context_key' => $context_key,
-                'result'      => 'invalid-object',
-            ) );
             return $is_dynamic;
         }
 
-        $source = WEM_ML_Source_Unit_Repository::get_by_context( $context_key );
+        foreach ( $fields as $setting_path => $definition ) {
+            $context_key = sprintf(
+                'elementor:%d:%s:%s:%s',
+                $object_id,
+                $element_id,
+                $widget_type,
+                $setting_path
+            );
 
-        if ( ! $source || 'elementor_widget_field' !== (string) $source->context_type || 'active' !== (string) $source->state ) {
-            self::trace( 'is_dynamic_content', array(
-                'object_id'   => $object_id,
-                'element_id'  => $element_id,
-                'context_key' => $context_key,
-                'result'      => 'missing-source',
-            ) );
-            return $is_dynamic;
+            $source = WEM_ML_Source_Unit_Repository::get_by_context( $context_key );
+
+            if ( $source && 'elementor_widget_field' === (string) $source->context_type && 'active' === (string) $source->state ) {
+                self::trace( 'is_dynamic_content', array(
+                    'object_id'      => $object_id,
+                    'element_id'     => $element_id,
+                    'context_key'    => $context_key,
+                    'source_unit_id' => (int) $source->id,
+                    'result'         => 'dynamic-true',
+                ) );
+
+                return true;
+            }
         }
 
-        self::trace( 'is_dynamic_content', array(
-            'object_id'      => $object_id,
-            'element_id'     => $element_id,
-            'context_key'    => $context_key,
-            'source_unit_id' => (int) $source->id,
-            'result'         => 'dynamic-true',
-        ) );
-
-        return true;
+        return $is_dynamic;
     }
 
     public static function evaluate_heading( $widget, $object_id, $language = 'es' ) {
+        return self::evaluate_widget_field( $widget, $object_id, 'heading', 'title', $language );
+    }
+
+    public static function evaluate_button( $widget, $object_id, $language = 'es' ) {
+        return self::evaluate_widget_field( $widget, $object_id, 'button', 'text', $language );
+    }
+
+    private static function evaluate_widget_field( $widget, $object_id, $widget_type, $setting_path, $language = 'es' ) {
         $result = array(
             'state'                => 'invalid-widget',
             'can_overlay'          => false,
@@ -94,14 +101,22 @@ final class WEM_ML_Elementor_Runtime_Overlay {
             'live_source_hash'     => '',
             'stored_source_hash'   => '',
             'translated_from_hash' => '',
+            'widget_type'          => $widget_type,
+            'setting_path'         => $setting_path,
         );
 
         if ( ! is_object( $widget ) || ! method_exists( $widget, 'get_name' ) || ! method_exists( $widget, 'get_id' ) ) {
             return $result;
         }
 
-        if ( 'heading' !== (string) $widget->get_name() ) {
+        if ( $widget_type !== sanitize_key( (string) $widget->get_name() ) ) {
             $result['state'] = 'unsupported-widget';
+            return $result;
+        }
+
+        $registered = WEM_ML_Elementor_Adapter_Registry::get_fields_for_widget( $widget_type );
+        if ( ! isset( $registered[ $setting_path ] ) ) {
+            $result['state'] = 'unsupported-field';
             return $result;
         }
 
@@ -130,14 +145,20 @@ final class WEM_ML_Elementor_Runtime_Overlay {
             return $result;
         }
 
-        $source_text = (string) $widget->get_settings( 'title' );
+        $source_text = (string) $widget->get_settings( $setting_path );
         if ( '' === trim( $source_text ) ) {
             $result['state'] = 'empty-source';
             return $result;
         }
 
         $element_id  = (string) $widget->get_id();
-        $context_key = sprintf( 'elementor:%d:%s:heading:title', $object_id, $element_id );
+        $context_key = sprintf(
+            'elementor:%d:%s:%s:%s',
+            $object_id,
+            $element_id,
+            $widget_type,
+            $setting_path
+        );
 
         $result['context_key']      = $context_key;
         $result['source_text']      = $source_text;
@@ -185,13 +206,23 @@ final class WEM_ML_Elementor_Runtime_Overlay {
             return $widget_content;
         }
 
-        if ( ! is_object( $widget ) || ! method_exists( $widget, 'get_name' ) || 'heading' !== (string) $widget->get_name() ) {
+        if ( ! is_object( $widget ) || ! method_exists( $widget, 'get_name' ) ) {
+            return $widget_content;
+        }
+
+        $widget_type = sanitize_key( (string) $widget->get_name() );
+
+        if ( 'heading' === $widget_type ) {
+            $setting_path = 'title';
+        } elseif ( 'button' === $widget_type ) {
+            $setting_path = 'text';
+        } else {
             return $widget_content;
         }
 
         $object_id  = self::get_current_object_id();
         $element_id = method_exists( $widget, 'get_id' ) ? (string) $widget->get_id() : '';
-        $evaluation = self::evaluate_heading( $widget, $object_id, 'es' );
+        $evaluation = self::evaluate_widget_field( $widget, $object_id, $widget_type, $setting_path, 'es' );
 
         self::trace( 'render_content', array(
             'object_id'      => $object_id,
@@ -207,9 +238,11 @@ final class WEM_ML_Elementor_Runtime_Overlay {
         }
 
         $replace_count = 0;
-        $replaced      = self::replace_heading_inner_html(
+        $replaced      = self::replace_structured_field_inner_html(
             (string) $widget_content,
             '',
+            $widget_type,
+            $setting_path,
             (string) $evaluation['translated_text'],
             $replace_count
         );
@@ -217,6 +250,7 @@ final class WEM_ML_Elementor_Runtime_Overlay {
         self::trace( 'render_content_replace', array(
             'object_id'     => $object_id,
             'element_id'    => $element_id,
+            'context_key'   => isset( $evaluation['context_key'] ) ? $evaluation['context_key'] : '',
             'replace_count' => (int) $replace_count,
             'result'        => $replace_count > 0 ? 'replaced' : 'pattern-miss',
         ) );
@@ -225,11 +259,11 @@ final class WEM_ML_Elementor_Runtime_Overlay {
     }
 
     /**
-     * Step 5A-R3: final Elementor-content structured overlay.
+     * Structured Elementor-content overlay.
      *
      * This is not a global text translator. It first discovers adapter-approved
-     * Heading.title fields, resolves their WEM Source Unit/Translation state,
-     * then targets only the exact Elementor wrapper identified by data-id.
+     * fields, resolves their WEM Source Unit/Translation state, then targets only
+     * the exact Elementor wrapper identified by data-id and the registered field DOM.
      */
     public static function filter_elementor_content( $content ) {
         if ( is_admin() || 'es' !== WEM_ML_Language_Context::get_current_language() ) {
@@ -269,19 +303,14 @@ final class WEM_ML_Elementor_Runtime_Overlay {
         $output = (string) $content;
 
         foreach ( $discovery['fields'] as $field ) {
-            if (
-                ! isset( $field['widget_type'], $field['setting_path'] )
-                || 'heading' !== (string) $field['widget_type']
-                || 'title' !== (string) $field['setting_path']
-            ) {
+            if ( ! self::is_runtime_supported_field( $field ) ) {
                 continue;
             }
 
             $source = WEM_ML_Source_Unit_Repository::get_by_context( (string) $field['context_key'] );
-            $state  = 'missing-source';
 
             if ( ! $source || 'elementor_widget_field' !== (string) $source->context_type || 'active' !== (string) $source->state ) {
-                self::trace_content_field( $object_id, $field, $state, 0 );
+                self::trace_content_field( $object_id, $field, 'missing-source', 0 );
                 continue;
             }
 
@@ -303,9 +332,11 @@ final class WEM_ML_Elementor_Runtime_Overlay {
             }
 
             $replace_count = 0;
-            $output        = self::replace_heading_inner_html(
+            $output        = self::replace_structured_field_inner_html(
                 $output,
                 (string) $field['element_id'],
+                (string) $field['widget_type'],
+                (string) $field['setting_path'],
                 (string) $translation->translated_text,
                 $replace_count
             );
@@ -314,6 +345,20 @@ final class WEM_ML_Elementor_Runtime_Overlay {
         }
 
         return $output;
+    }
+
+    private static function is_runtime_supported_field( $field ) {
+        if ( ! isset( $field['widget_type'], $field['setting_path'] ) ) {
+            return false;
+        }
+
+        return (
+            'heading' === (string) $field['widget_type']
+            && 'title' === (string) $field['setting_path']
+        ) || (
+            'button' === (string) $field['widget_type']
+            && 'text' === (string) $field['setting_path']
+        );
     }
 
     private static function trace_content_field( $object_id, $field, $state, $replace_count ) {
@@ -327,13 +372,19 @@ final class WEM_ML_Elementor_Runtime_Overlay {
         ) );
     }
 
-    /**
-     * Replace the inner HTML of one Elementor Heading.
-     *
-     * When $element_id is provided, the search starts at the exact Elementor
-     * wrapper data-id and then finds its Heading title. When it is empty, this
-     * helper operates on already widget-scoped HTML from render_content.
-     */
+    private static function replace_structured_field_inner_html( $html, $element_id, $widget_type, $setting_path, $translated_text, &$replace_count ) {
+        if ( 'heading' === $widget_type && 'title' === $setting_path ) {
+            return self::replace_heading_inner_html( $html, $element_id, $translated_text, $replace_count );
+        }
+
+        if ( 'button' === $widget_type && 'text' === $setting_path ) {
+            return self::replace_button_text_inner_html( $html, $element_id, $translated_text, $replace_count );
+        }
+
+        $replace_count = 0;
+        return (string) $html;
+    }
+
     private static function replace_heading_inner_html( $html, $element_id, $translated_text, &$replace_count ) {
         $replace_count = 0;
         $html          = (string) $html;
@@ -348,17 +399,38 @@ final class WEM_ML_Elementor_Runtime_Overlay {
             $pattern = '~(?P<prefix><h[1-6]\\b[^>]*\\bclass=["\\\'][^"\\\']*\\belementor-heading-title\\b[^"\\\']*["\\\'][^>]*>)(?P<inner>.*?)(?P<suffix></h[1-6]>)~is';
         }
 
+        return self::replace_inner_html_by_pattern( $html, $pattern, $translated_text, $replace_count );
+    }
+
+    private static function replace_button_text_inner_html( $html, $element_id, $translated_text, &$replace_count ) {
+        $replace_count = 0;
+        $html          = (string) $html;
+
+        if ( '' === trim( (string) $translated_text ) || '' === $html ) {
+            return $html;
+        }
+
+        if ( '' !== $element_id ) {
+            $pattern = '~(?P<prefix><[^>]+\\bdata-id=["\\\']' . preg_quote( $element_id, '~' ) . '["\\\'][^>]*>[\\s\\S]{0,20000}?<span\\b[^>]*\\bclass=["\\\'][^"\\\']*\\belementor-button-text\\b[^"\\\']*["\\\'][^>]*>)(?P<inner>.*?)(?P<suffix></span>)~is';
+        } else {
+            $pattern = '~(?P<prefix><span\\b[^>]*\\bclass=["\\\'][^"\\\']*\\belementor-button-text\\b[^"\\\']*["\\\'][^>]*>)(?P<inner>.*?)(?P<suffix></span>)~is';
+        }
+
+        return self::replace_inner_html_by_pattern( $html, $pattern, $translated_text, $replace_count );
+    }
+
+    private static function replace_inner_html_by_pattern( $html, $pattern, $translated_text, &$replace_count ) {
         $replaced = preg_replace_callback(
             $pattern,
             static function ( $matches ) use ( $translated_text ) {
                 return $matches['prefix'] . esc_html( $translated_text ) . $matches['suffix'];
             },
-            $html,
+            (string) $html,
             1,
             $replace_count
         );
 
-        return is_string( $replaced ) ? $replaced : $html;
+        return is_string( $replaced ) ? $replaced : (string) $html;
     }
 
     private static function get_current_object_id() {
@@ -376,7 +448,7 @@ final class WEM_ML_Elementor_Runtime_Overlay {
             return false;
         }
 
-        $plugin = \Elementor\Plugin::$instance;
+        $plugin = \\Elementor\\Plugin::$instance;
 
         if ( isset( $plugin->editor ) && method_exists( $plugin->editor, 'is_edit_mode' ) && $plugin->editor->is_edit_mode() ) {
             return true;
