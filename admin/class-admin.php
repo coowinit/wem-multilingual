@@ -38,9 +38,40 @@ final class WEM_ML_Admin {
             ? sanitize_title( wp_unslash( $_POST['translated_slug'] ) )
             : '';
 
-        $result = WEM_ML_Slug_Repository::save( $object_type, $object_id, 'es', $translated_slug );
+        $previous_slug = WEM_ML_Slug_Repository::get_slug( $object_type, $object_id, 'es' );
 
-        self::redirect_with_result( $result, 'wem_ml_slug_saved' );
+        $result = WEM_ML_Slug_Repository::save( $object_type, $object_id, 'es', $translated_slug );
+        $extra_args = array();
+
+        if ( ! is_wp_error( $result ) ) {
+            if ( (string) $previous_slug !== (string) $translated_slug ) {
+                $extra_urls = array();
+
+                if ( $previous_slug ) {
+                    $extra_urls[] = home_url( user_trailingslashit( 'es/' . $previous_slug ) );
+                }
+
+                $purge = WEM_ML_Cache_Invalidator::purge_object( $object_id, $extra_urls );
+
+                if ( is_wp_error( $purge ) ) {
+                    $extra_args['wem_ml_cache_status']  = 'error';
+                    $extra_args['wem_ml_cache_reason']  = 'slug';
+                    $extra_args['wem_ml_cache_message'] = rawurlencode( $purge->get_error_message() );
+                } else {
+                    $extra_args['wem_ml_cache_status']   = 'purged';
+                    $extra_args['wem_ml_cache_reason']   = 'slug';
+                    $extra_args['wem_ml_cache_count']    = count( $purge['purged'] );
+                    $extra_args['wem_ml_cache_provider'] = sanitize_key( $purge['provider'] );
+                    $extra_args['wem_ml_cache_method']   = sanitize_key( $purge['method'] );
+                }
+            } else {
+                $extra_args['wem_ml_cache_status'] = 'unchanged';
+                $extra_args['wem_ml_cache_reason'] = 'state';
+                $extra_args['wem_ml_cache_reason'] = 'slug';
+            }
+        }
+
+        self::redirect_with_result( $result, 'wem_ml_slug_saved', $extra_args );
     }
 
     public static function handle_sync_title_source() {
@@ -96,12 +127,14 @@ final class WEM_ML_Admin {
 
                 if ( is_wp_error( $purge ) ) {
                     $extra_args['wem_ml_cache_status']  = 'error';
+                    $extra_args['wem_ml_cache_reason']  = 'state';
                     $extra_args['wem_ml_cache_message'] = rawurlencode( $purge->get_error_message() );
                 } else {
-                    $extra_args['wem_ml_cache_status'] = 'purged';
-                    $extra_args['wem_ml_cache_count']  = count( $purge['purged'] );
+                    $extra_args['wem_ml_cache_status']   = 'purged';
+                    $extra_args['wem_ml_cache_reason']   = 'state';
+                    $extra_args['wem_ml_cache_count']    = count( $purge['purged'] );
                     $extra_args['wem_ml_cache_provider'] = sanitize_key( $purge['provider'] );
-                    $extra_args['wem_ml_cache_method'] = sanitize_key( $purge['method'] );
+                    $extra_args['wem_ml_cache_method']   = sanitize_key( $purge['method'] );
                 }
             } else {
                 $extra_args['wem_ml_cache_status'] = 'unchanged';
@@ -272,25 +305,30 @@ final class WEM_ML_Admin {
         }
         if ( isset( $_GET['wem_ml_cache_status'] ) ) {
             $cache_status = sanitize_key( wp_unslash( (string) $_GET['wem_ml_cache_status'] ) );
+            $cache_reason = isset( $_GET['wem_ml_cache_reason'] )
+                ? sanitize_key( wp_unslash( (string) $_GET['wem_ml_cache_reason'] ) )
+                : 'state';
+
+            $label = 'slug' === $cache_reason ? 'Translated Slug' : 'Object Language State';
 
             if ( 'purged' === $cache_status ) {
                 $count    = isset( $_GET['wem_ml_cache_count'] ) ? absint( $_GET['wem_ml_cache_count'] ) : 0;
                 $provider = isset( $_GET['wem_ml_cache_provider'] ) ? sanitize_key( wp_unslash( (string) $_GET['wem_ml_cache_provider'] ) ) : '';
                 $method   = isset( $_GET['wem_ml_cache_method'] ) ? sanitize_key( wp_unslash( (string) $_GET['wem_ml_cache_method'] ) ) : '';
 
-                echo '<div class="notice notice-success is-dismissible"><p>State 变化后已自动执行 targeted cache purge：'
+                echo '<div class="notice notice-success is-dismissible"><p>' . esc_html( $label ) . ' 变化后已自动执行 targeted cache purge：'
                     . esc_html( (string) $count )
                     . ' 个 URL；Provider=' . esc_html( $provider )
                     . '；Method=' . esc_html( $method )
                     . '。</p></div>';
             } elseif ( 'unchanged' === $cache_status ) {
-                echo '<div class="notice notice-info is-dismissible"><p>Object Language State 与当前值一致，本次未触发缓存清理。</p></div>';
+                echo '<div class="notice notice-info is-dismissible"><p>' . esc_html( $label ) . ' 与当前值一致，本次未触发缓存清理。</p></div>';
             } elseif ( 'error' === $cache_status ) {
                 $message = isset( $_GET['wem_ml_cache_message'] )
                     ? sanitize_text_field( rawurldecode( wp_unslash( (string) $_GET['wem_ml_cache_message'] ) ) )
                     : '缓存清理失败。';
 
-                echo '<div class="notice notice-warning is-dismissible"><p>Object Language State 已保存，但 targeted cache purge 失败：'
+                echo '<div class="notice notice-warning is-dismissible"><p>' . esc_html( $label ) . ' 已保存，但 targeted cache purge 失败：'
                     . esc_html( $message )
                     . '</p></div>';
             }
