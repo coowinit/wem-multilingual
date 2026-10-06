@@ -66,7 +66,6 @@ final class WEM_ML_Admin {
                 }
             } else {
                 $extra_args['wem_ml_cache_status'] = 'unchanged';
-                $extra_args['wem_ml_cache_reason'] = 'state';
                 $extra_args['wem_ml_cache_reason'] = 'slug';
             }
         }
@@ -138,6 +137,7 @@ final class WEM_ML_Admin {
                 }
             } else {
                 $extra_args['wem_ml_cache_status'] = 'unchanged';
+                $extra_args['wem_ml_cache_reason'] = 'state';
             }
         }
 
