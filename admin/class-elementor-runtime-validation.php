@@ -7,7 +7,7 @@
  * - Compares repository/runtime decision with actual EN/ES frontend output.
  * - Performs normal + cache-bypass Spanish requests.
  * - Reports WEM language header, common cache headers and validation-only runtime trace.
- * - Heading only for the current experiment scope.
+ * - Step 5E validates adapter-approved Heading.title + Button.text.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -82,14 +82,22 @@ final class WEM_ML_Elementor_Runtime_Validation {
             return $discovery;
         }
 
-        $headings = array_values( array_filter( $discovery['fields'], static function ( $field ) {
-            return isset( $field['widget_type'], $field['setting_path'] )
-                && 'heading' === $field['widget_type']
-                && 'title' === $field['setting_path'];
+        $runtime_fields = array_values( array_filter( $discovery['fields'], static function ( $field ) {
+            if ( ! isset( $field['widget_type'], $field['setting_path'] ) ) {
+                return false;
+            }
+
+            return (
+                'heading' === $field['widget_type']
+                && 'title' === $field['setting_path']
+            ) || (
+                'button' === $field['widget_type']
+                && 'text' === $field['setting_path']
+            );
         } ) );
 
-        if ( empty( $headings ) ) {
-            return new WP_Error( 'wem_ml_validation_no_heading', '当前对象没有 Adapter 可识别的 Heading.title。' );
+        if ( empty( $runtime_fields ) ) {
+            return new WP_Error( 'wem_ml_validation_no_runtime_fields', '当前对象没有 Adapter 可识别的 Heading.title 或 Button.text。' );
         }
 
         $slug        = WEM_ML_Slug_Repository::get_slug( $post->post_type, $object_id, 'es' );
@@ -104,7 +112,7 @@ final class WEM_ML_Elementor_Runtime_Validation {
         $runtime_trace   = self::extract_runtime_trace( $es_bypass_fetch['body'] );
 
         $rows = array();
-        foreach ( $headings as $field ) {
+        foreach ( $runtime_fields as $field ) {
             $source      = WEM_ML_Source_Unit_Repository::get_by_context( $field['context_key'] );
             $translation = $source ? WEM_ML_Translation_Repository::get_translation( (int) $source->id, 'es' ) : null;
             $runtime_state = 'missing-source';
@@ -125,9 +133,9 @@ final class WEM_ML_Elementor_Runtime_Validation {
                 }
             }
 
-            $actual_en        = $en_fetch['ok'] ? self::extract_heading( $en_fetch['body'], $field['element_id'] ) : '';
-            $actual_es        = $es_fetch['ok'] ? self::extract_heading( $es_fetch['body'], $field['element_id'] ) : '';
-            $actual_es_bypass = $es_bypass_fetch['ok'] ? self::extract_heading( $es_bypass_fetch['body'], $field['element_id'] ) : '';
+            $actual_en        = $en_fetch['ok'] ? self::extract_runtime_field( $en_fetch['body'], $field ) : '';
+            $actual_es        = $es_fetch['ok'] ? self::extract_runtime_field( $es_fetch['body'], $field ) : '';
+            $actual_es_bypass = $es_bypass_fetch['ok'] ? self::extract_runtime_field( $es_bypass_fetch['body'], $field ) : '';
 
             $en_match        = '' !== $actual_en && self::same_text( $actual_en, (string) $field['source_text'] );
             $es_match        = '' !== $actual_es && self::same_text( $actual_es, $expected_es );
@@ -135,6 +143,8 @@ final class WEM_ML_Elementor_Runtime_Validation {
 
             $rows[] = array(
                 'element_id'            => $field['element_id'],
+                'widget_type'           => isset( $field['widget_type'] ) ? (string) $field['widget_type'] : '',
+                'setting_path'          => isset( $field['setting_path'] ) ? (string) $field['setting_path'] : '',
                 'context_key'           => $field['context_key'],
                 'source_text'           => (string) $field['source_text'],
                 'live_source_hash'      => (string) $field['source_hash'],
@@ -265,17 +275,41 @@ final class WEM_ML_Elementor_Runtime_Validation {
         return 'CHECK REQUIRED';
     }
 
-    private static function extract_heading( $html, $element_id ) {
-        if ( '' === $html || '' === $element_id ) return '';
+    private static function extract_runtime_field( $html, $field ) {
+        if ( empty( $field['element_id'] ) || empty( $field['widget_type'] ) || empty( $field['setting_path'] ) ) {
+            return '';
+        }
+
+        if ( 'heading' === $field['widget_type'] && 'title' === $field['setting_path'] ) {
+            return self::extract_element_text_by_class( $html, $field['element_id'], 'elementor-heading-title', 'h[1-6]' );
+        }
+
+        if ( 'button' === $field['widget_type'] && 'text' === $field['setting_path'] ) {
+            return self::extract_element_text_by_class( $html, $field['element_id'], 'elementor-button-text', 'span' );
+        }
+
+        return '';
+    }
+
+    private static function extract_element_text_by_class( $html, $element_id, $class_name, $tag_pattern ) {
+        if ( '' === $html || '' === $element_id || '' === $class_name ) {
+            return '';
+        }
 
         if ( class_exists( 'DOMDocument' ) ) {
             $previous = libxml_use_internal_errors( true );
             $dom = new DOMDocument();
             $loaded = $dom->loadHTML( '<?xml encoding="utf-8" ?>' . $html );
+
             if ( $loaded ) {
                 $xpath = new DOMXPath( $dom );
-                $query = sprintf( '//*[@data-id="%s"]//*[contains(concat(" ", normalize-space(@class), " "), " elementor-heading-title ")]', $element_id );
+                $query = sprintf(
+                    '//*[@data-id="%s"]//*[contains(concat(" ", normalize-space(@class), " "), " %s ")]',
+                    $element_id,
+                    $class_name
+                );
                 $nodes = $xpath->query( $query );
+
                 if ( $nodes && $nodes->length > 0 ) {
                     $text = trim( html_entity_decode( $nodes->item( 0 )->textContent, ENT_QUOTES | ENT_HTML5, 'UTF-8' ) );
                     libxml_clear_errors();
@@ -283,14 +317,25 @@ final class WEM_ML_Elementor_Runtime_Validation {
                     return $text;
                 }
             }
+
             libxml_clear_errors();
             libxml_use_internal_errors( $previous );
         }
 
-        $pattern = '/data-id=["\']' . preg_quote( $element_id, '/' ) . '["\'][\s\S]{0,5000}?class=["\'][^"\']*elementor-heading-title[^"\']*["\'][^>]*>([\s\S]*?)<\/h[1-6]>/i';
+        $pattern = '/data-id=["\']'
+            . preg_quote( $element_id, '/' )
+            . '["\'][\s\S]{0,5000}?<'
+            . $tag_pattern
+            . '\b[^>]*class=["\'][^"\']*'
+            . preg_quote( $class_name, '/' )
+            . '[^"\']*["\'][^>]*>([\s\S]*?)<\/'
+            . $tag_pattern
+            . '>/i';
+
         if ( preg_match( $pattern, $html, $matches ) ) {
             return trim( wp_strip_all_tags( html_entity_decode( $matches[1], ENT_QUOTES | ENT_HTML5, 'UTF-8' ) ) );
         }
+
         return '';
     }
 
@@ -322,13 +367,13 @@ final class WEM_ML_Elementor_Runtime_Validation {
         <h2 style="margin-top:28px">Elementor Runtime Trace</h2>
         <?php self::render_trace_table( $report['runtime_trace'] ); ?>
 
-        <h2 style="margin-top:28px">Heading Runtime Checks</h2>
+        <h2 style="margin-top:28px">Structured Runtime Checks</h2>
         <table class="widefat striped" style="max-width:1900px">
             <thead><tr><th>Element</th><th>Source / Translation</th><th>Hash State</th><th>Runtime Decision</th><th>Expected ES</th><th>Actual EN</th><th>Normal ES</th><th>Bypass ES</th><th>Diagnosis</th></tr></thead>
             <tbody>
             <?php foreach ( $report['rows'] as $row ) : ?>
                 <tr>
-                    <td><code><?php echo esc_html( $row['element_id'] ); ?></code><br><small><code><?php echo esc_html( $row['context_key'] ); ?></code></small><br><small>Source Unit: <?php echo $row['source_unit_id'] ? '#' . esc_html( (string) $row['source_unit_id'] ) : 'missing'; ?></small></td>
+                    <td><code><?php echo esc_html( $row['element_id'] ); ?></code><br><small><strong><?php echo esc_html( $row['widget_type'] . '.' . $row['setting_path'] ); ?></strong></small><br><small><code><?php echo esc_html( $row['context_key'] ); ?></code></small><br><small>Source Unit: <?php echo $row['source_unit_id'] ? '#' . esc_html( (string) $row['source_unit_id'] ) : 'missing'; ?></small></td>
                     <td><strong>Source:</strong> <?php echo esc_html( $row['source_text'] ); ?><br><strong>Spanish:</strong> <?php echo '' !== $row['translated_text'] ? esc_html( $row['translated_text'] ) : '<em>missing</em>'; ?></td>
                     <td><small>Live: <code><?php echo esc_html( self::short_hash( $row['live_source_hash'] ) ); ?></code></small><br><small>Stored: <code><?php echo esc_html( self::short_hash( $row['stored_source_hash'] ) ); ?></code></small><br><small>From: <code><?php echo esc_html( self::short_hash( $row['translated_from_hash'] ) ); ?></code></small></td>
                     <td><strong><?php echo esc_html( $row['runtime_state'] ); ?></strong></td>
