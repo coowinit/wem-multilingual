@@ -2,7 +2,7 @@
 /**
  * Read-only Elementor Runtime Validation Lab.
  *
- * v0.1.1 Step 5 Runtime Validation v3:
+ * v0.1.1 Structured Runtime Validation v4:
  * - No writes, no cache purge, no translation/state mutation.
  * - Compares repository/runtime decision with actual EN/ES frontend output.
  * - Performs normal + cache-bypass Spanish requests.
@@ -40,7 +40,7 @@ final class WEM_ML_Elementor_Runtime_Validation {
         ?>
         <div class="wrap">
             <h1>WEM ML Elementor Runtime Validation</h1>
-            <p><strong>v0.1.1 · Step 5 Runtime Validation v3</strong></p>
+            <p><strong>v0.1.1 · Structured Runtime Validation v4</strong></p>
             <p>一键只读检查 Routing / State / Source Unit / Translation / Runtime Decision，并对 Spanish 页面执行 Normal / Cache-bypass 双请求；Bypass 请求还会返回 Elementor Runtime Trace。不会清缓存，也不会修改任何数据。</p>
 
             <form method="get" action="<?php echo esc_url( admin_url( 'tools.php' ) ); ?>">
@@ -50,7 +50,7 @@ final class WEM_ML_Elementor_Runtime_Validation {
                         <th scope="row"><label for="wem-ml-runtime-validation-object-id">Content Object ID</label></th>
                         <td>
                             <input id="wem-ml-runtime-validation-object-id" name="object_id" type="number" min="1" required class="small-text" value="<?php echo $object_id ? esc_attr( (string) $object_id ) : ''; ?>">
-                            <p class="description">当前 Step 5 建议测试 Page <code>#1730</code>。</p>
+                            <p class="description">当前回归测试对象可继续使用 Page <code>#1730</code>。</p>
                         </td>
                     </tr>
                 </table>
