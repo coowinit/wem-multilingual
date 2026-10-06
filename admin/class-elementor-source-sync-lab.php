@@ -1,6 +1,6 @@
 <?php
 /**
- * Elementor Structured Translation Lab - Step 3A.
+ * Elementor Structured Source Sync Lab - v0.1.1.
  *
  * Explicitly syncs adapter-approved Elementor source fields into WEM Source Units.
  * Never mutates _elementor_data and never writes translations.
@@ -121,8 +121,8 @@ final class WEM_ML_Elementor_Source_Sync_Lab {
         ?>
         <div class="wrap">
             <h1>WEM ML Elementor Source Sync</h1>
-            <p><strong>v0.1.1 · Step 3A · Source Unit Sync</strong></p>
-            <p>本页只允许把 Adapter Registry 已确认的 Elementor Source Field 同步到 <code>wp_wem_ml_strings</code>。不会保存 Spanish Translation，也不会修改 <code>_elementor_data</code>。</p>
+            <p><strong>v0.1.1 · Elementor Structured Source Sync Lab</strong></p>
+            <p>本页只把 Adapter Registry 已确认的 Elementor Source Field 同步到 <code>wp_wem_ml_strings</code>。不会保存 Spanish Translation，也不会修改 <code>_elementor_data</code>。</p>
 
             <?php self::render_notice(); ?>
 
