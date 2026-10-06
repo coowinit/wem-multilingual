@@ -64,20 +64,57 @@ final class WEM_ML_Cache_Invalidator {
      * @param int $object_id WordPress object ID.
      * @return array|WP_Error
      */
-    public static function purge_object( $object_id ) {
+    public static function purge_object( $object_id, $extra_urls = array() ) {
         $resolved = self::resolve_object_urls( $object_id );
 
         if ( is_wp_error( $resolved ) ) {
             return $resolved;
         }
 
-        $urls = $resolved['urls'];
+        $urls = array_merge(
+            $resolved['urls'],
+            is_array( $extra_urls ) ? $extra_urls : array()
+        );
+
+        $urls = array_values(
+            array_unique(
+                array_filter(
+                    array_map( 'esc_url_raw', $urls )
+                )
+            )
+        );
+
+        return self::purge_urls( $urls, $resolved );
+    }
+
+    /**
+     * Purge a specific list of URLs without ever falling back to a full-domain purge.
+     *
+     * @param array $urls     Absolute URLs.
+     * @param array $context Optional result context.
+     * @return array|WP_Error
+     */
+    public static function purge_urls( $urls, $context = array() ) {
+        $urls = array_values(
+            array_unique(
+                array_filter(
+                    array_map( 'esc_url_raw', is_array( $urls ) ? $urls : array() )
+                )
+            )
+        );
+
+        if ( empty( $urls ) ) {
+            return new WP_Error(
+                'wem_ml_cache_urls_missing',
+                '没有可用于缓存清理的目标 URL。'
+            );
+        }
 
         if ( function_exists( 'rocket_clean_files' ) ) {
             rocket_clean_files( $urls );
 
             return array_merge(
-                $resolved,
+                $context,
                 array(
                     'provider' => 'wp-rocket',
                     'method'   => 'rocket_clean_files',
@@ -92,7 +129,7 @@ final class WEM_ML_Cache_Invalidator {
             }
 
             return array_merge(
-                $resolved,
+                $context,
                 array(
                     'provider' => 'siteground',
                     'method'   => 'sg_cachepress_purge_cache',
