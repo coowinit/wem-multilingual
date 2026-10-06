@@ -1,8 +1,8 @@
 # WEM Multilingual
 
 > 🌍 面向 WordPress B2B 企业官网的 SEO 优先多语言基础插件  
-> **当前阶段：v0.1.0 Experimental Core 已完成验证**  
-> **当前状态：核心架构实验通过，尚未进入生产可用阶段**
+> **当前阶段：v0.1.0 Core + v0.1.1 Elementor Structured Translation 核心实验已完成验证**  
+> **当前状态：架构实验持续通过，尚未进入生产可用阶段**
 
 ---
 
@@ -22,9 +22,9 @@ SEO 结构正确
 后续复杂能力通过 Adapter / Lab 逐步扩展
 ```
 
-`v0.1.0 Experimental Core` 已完成真实 WordPress 环境中的 T01–T10 验收。
+`v0.1.0 Experimental Core` 已完成真实 WordPress 环境中的 T01–T10 验收；`v0.1.1 Elementor Structured Translation Lab` 已完成 Heading.title、Button.text、Runtime Overlay 与 targeted cache invalidation 的核心实验。
 
-> **当前版本仍是实验核心，不建议直接用于生产站。**
+> **当前版本仍属于架构实验，不建议直接用于生产站。**
 
 ---
 
@@ -86,7 +86,7 @@ HTML DOM Translation 是否值得成为 Core？
 - WordPress 企业官网
 - B2B 外贸站
 - Page / Post
-- Elementor（后续 Adapter）
+- Elementor（v0.1.1 已验证 Heading.title / Button.text Adapter）
 - 后续扩展 CPT / Taxonomy
 - 自定义结构化字段
 - SEO Title / Meta Description / Schema / Sitemap
@@ -350,7 +350,7 @@ Page / Post
 
 Elementor
 → Adapter-based Structured Translation
-   v0.1.1 单独实验
+   v0.1.1 已完成 Heading.title / Button.text 核心实验
 
 Taxonomy
 → 暂缓
@@ -576,20 +576,21 @@ SiteGround / Cloudflare 回环请求缓存干扰
 
 # 12. 当前已知边界
 
-虽然 v0.1.0 核心实验通过，但仍然明确不包含：
+虽然 v0.1.0 Core 与 v0.1.1 Elementor 核心实验已经通过，但仍然明确不包含完整的：
 
 ```text
-post_content
-Elementor
+post_content 通用翻译
+Elementor Text Editor / Image / Icon List
+Elementor Repeater / Tabs / Accordion / Loop Grid
+Elementor Widget Identity Migration
+Global Widget / Dynamic Tags
 Taxonomy
 Menu
 Media
 AI Provider
 Translation Memory
 Glossary
-HTML Parser
-DOM Parser
-the_content Translation
+HTML / DOM 通用翻译器
 CPT Base Translation
 Occurrence
 Search
@@ -619,41 +620,63 @@ CF-Cache-Status = DYNAMIC
 
 # 13. Elementor 当前策略
 
-Elementor **不进入 v0.1.0 Core**。
+Elementor **不进入 v0.1.0 Core**，而是在 v0.1.1 通过 Adapter 独立验证。
 
-下一阶段：
-
-```text
-v0.1.1
-Elementor Structured Translation Lab
-```
-
-当前原则：
+当前已经验证：
 
 ```text
 Adapter Registry
 +
 Read-only Source Discovery
 +
-Widget-scoped Runtime Overlay
+Translation Repository
++
+Structured Locator-scoped Runtime Overlay
++
+Targeted Cache Invalidation
 ```
+
+首批字段：
+
+```text
+heading.title ✅
+button.text   ✅
+```
+
+Runtime Hook 实验结论：
+
+```text
+before_render
+→ 不作为唯一稳定层
+
+elementor/widget/render_content
+→ 可用于部分 Widget 路径与诊断
+
+elementor/frontend/the_content
+→ 当前稳定的最终 Structured Overlay 层
+```
+
+这里不是按 English Source Text 做全局替换，而是先根据：
+
+```text
+object_id
+element_id
+widget_type
+setting_path
+```
+
+定位 Adapter 已声明的 Widget / Field，再只修改该 Widget 内的目标 DOM。
 
 禁止：
 
 ```text
 修改 _elementor_data
 全局 DOM Translator
-把 the_content 字符串替换作为 Core
+把目标语言写回 Elementor JSON
+未知 Widget / Field 自动猜测
 ```
 
-第一批实验建议：
-
-```text
-Heading
-Button
-```
-
-再考虑：
+下一批候选仍是：
 
 ```text
 Text Editor
@@ -661,9 +684,12 @@ Image
 Icon List
 ```
 
+但 Widget Identity Migration、Page Duplicate、Template Insert、复杂 Widget 等仍未解决。
+
 详细见：
 
 - [Elementor Structured Translation 策略](docs/05-elementor-strategy.md)
+- [v0.1.1 Elementor 验收报告](docs/09-v0.1.1-elementor-validation.md)
 - [ADR-004：Elementor 策略](docs/adr/ADR-004-elementor-strategy.md)
 
 ---
@@ -727,6 +753,11 @@ v0.1.0 Experimental Core
         ▼
 v0.1.1
 Elementor Structured Translation Lab
+        ├─ Heading.title               ✅
+        ├─ Button.text                 ✅
+        ├─ Structured Runtime Overlay  ✅
+        ├─ Targeted Cache Invalidation ✅
+        └─ Identity Migration          ⏳
         │
         ▼
 Later
@@ -757,10 +788,11 @@ Menu / Media / Provider / TM / Search
 5. [Elementor 策略](docs/05-elementor-strategy.md)
 6. [Taxonomy：暂缓与风险](docs/06-taxonomy-deferred.md)
 
-### 第四步：看 v0.1.0 实际怎么落地
+### 第四步：看实际验证结果
 
 7. [v0.1.0 Experimental Core 开发规划](docs/07-v0.1.0-plan.md)
 8. [v0.1.0 Final Validation](docs/08-v0.1.0-validation.md)
+9. [v0.1.1 Elementor Structured Translation Lab 验收报告](docs/09-v0.1.1-elementor-validation.md)
 
 ### 第五步：遇到架构疑问时查 ADR
 
@@ -869,6 +901,7 @@ wem-multilingual/
     ├── 06-taxonomy-deferred.md
     ├── 07-v0.1.0-plan.md
     ├── 08-v0.1.0-validation.md
+    ├── 09-v0.1.1-elementor-validation.md
     └── adr/
         ├── ADR-001-core-object-model.md
         ├── ADR-002-routing-model.md
@@ -904,6 +937,9 @@ v0.1.0 Validation
    ✅
 
 v0.1.1 Elementor Lab
+   ✅ Core experimental validation
+
+Elementor Identity Migration
    ⏳
 ```
 
@@ -939,7 +975,7 @@ v0.1.1 Elementor Lab
 
 ## 当前结论
 
-> **v0.1.0 Experimental Core Validation Complete。**
+> **v0.1.0 Experimental Core + v0.1.1 Elementor Structured Translation Core Validation Complete。**
 
 在当前实验边界内，已经证明：
 
@@ -957,9 +993,15 @@ Object Language State
 Runtime Overlay
 +
 SEO Core
++
+Elementor Adapter Registry
++
+Structured Runtime Overlay
++
+Targeted Cache Invalidation
 ```
 
-这条核心链路可以成立。
+这些链路在当前实验边界内可以成立。
 
 但它仍然只是下一阶段开发的架构基线，不等于生产版完成。
 
