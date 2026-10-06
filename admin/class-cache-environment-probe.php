@@ -133,7 +133,7 @@ final class WEM_ML_Cache_Environment_Probe {
             <hr style="margin-top:32px">
             <div id="wem-ml-cache-environment-probe">
                 <h2>Cache Environment Probe</h2>
-                <p><strong>v0.1.1 · Step 5C-2 · Targeted Object Cache Purge Lab</strong></p>
+                <p><strong>v0.1.1 · Targeted Object Cache Diagnostics</strong></p>
                 <p>本区块检测缓存环境与目标 URL，并提供显式的对象级缓存清理实验。不会修改任何 WEM / Elementor 数据，也不会调用全站缓存清理。</p>
 
                 <?php self::render_notice(); ?>
@@ -170,10 +170,10 @@ final class WEM_ML_Cache_Environment_Probe {
                         </tr>
                         <tr>
                             <th scope="row">Cloudflare Strategy</th>
-                            <td>由 WP Rocket 的现有 Cloudflare 集成间接管理；WEM v0.1.1 不直接保存 Cloudflare API 凭据，也不直接调用 Cloudflare Purge API。Step 5C-2 只验证 WP Rocket 的 targeted purge 是否足以让当前 EN / ES 页面恢复正确输出。</td>
+                            <td>由 WP Rocket 的现有 Cloudflare 集成间接管理；WEM v0.1.1 不直接保存 Cloudflare API 凭据，也不直接调用 Cloudflare Purge API。WEM 优先通过 WP Rocket 的 targeted purge 清理当前对象 EN / ES 页面；Cloudflare 继续由 WP Rocket 的既有集成间接管理。</td>
                         </tr>
                         <tr>
-                            <th scope="row">Step 5C-2 Readiness</th>
+                            <th scope="row">Targeted Purge Readiness</th>
                             <td><?php echo $targeted_ready ? '✅ ready for targeted EN + ES purge experiment' : '⚠ targeted purge prerequisites incomplete'; ?></td>
                         </tr>
                     </tbody>
@@ -189,7 +189,7 @@ final class WEM_ML_Cache_Environment_Probe {
                         <?php wp_nonce_field( 'wem_ml_purge_object_cache' ); ?>
                         <?php submit_button( 'Purge This Object Cache', 'secondary', 'submit', false ); ?>
                     </form>
-                    <p class="description" style="margin-top:8px">点击后会返回当前 Runtime Validation 页面并自动重新检查 #<?php echo esc_html( (string) $object_id ); ?>。本实验只验证 targeted purge，不会自动绑定 Translation / Source / State / Slug 保存事件。</p>
+                    <p class="description" style="margin-top:8px">点击后会返回当前 Runtime Validation 页面并自动重新检查 #<?php echo esc_html( (string) $object_id ); ?>。该按钮作为长期诊断工具保留；正常编辑流程中，Translation / Source / State / Slug 的真实变化已经会自动触发对象级缓存失效。</p>
                 <?php else : ?>
                     <p><strong>⚠ 当前环境还不能执行 targeted purge。</strong></p>
                 <?php endif; ?>
