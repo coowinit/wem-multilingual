@@ -448,7 +448,7 @@ final class WEM_ML_Elementor_Runtime_Overlay {
             return false;
         }
 
-        $plugin = \\Elementor\\Plugin::$instance;
+        $plugin = \Elementor\Plugin::$instance;
 
         if ( isset( $plugin->editor ) && method_exists( $plugin->editor, 'is_edit_mode' ) && $plugin->editor->is_edit_mode() ) {
             return true;
